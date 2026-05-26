@@ -25,6 +25,12 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
+      - name: Show project files
+        run: |
+          pwd
+          ls -la
+          find . -maxdepth 3 -type f | sort | head -120
+
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
