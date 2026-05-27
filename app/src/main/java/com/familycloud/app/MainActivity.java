@@ -156,7 +156,8 @@ public class MainActivity extends Activity {
                     .apply();
 
             showWebView();
-            webView.loadUrl(url + "/login");
+            fcRestoreCookies(url);
+                    webView.loadUrl(url + "/dashboard");
         });
 
         editUrl.setOnClickListener(v -> showLocalUrlEditScreen());
@@ -201,7 +202,8 @@ public class MainActivity extends Activity {
                     .apply();
 
             showWebView();
-            webView.loadUrl(url + "/login");
+            fcRestoreCookies(url);
+                    webView.loadUrl(url + "/dashboard");
         });
 
         back.setOnClickListener(v -> showOfflineChoiceScreen());
@@ -287,6 +289,7 @@ public class MainActivity extends Activity {
 
         autoSync.setOnClickListener(v -> {
             saveCookieForBase(currentBaseUrl);
+                    fcSaveCurrentCookies();
                     fcSaveCookieForBase(currentBaseUrl);
                     android.webkit.CookieManager.getInstance().flush();
             Intent intent = new Intent(this, BackupActivity.class);
@@ -397,6 +400,7 @@ public class MainActivity extends Activity {
 
                 if (url != null && url.toLowerCase().contains("/dashboard")) {
                     saveCookieForBase(currentBaseUrl);
+                    fcSaveCurrentCookies();
                     fcSaveCookieForBase(currentBaseUrl);
                     android.webkit.CookieManager.getInstance().flush();
                 }
@@ -522,28 +526,7 @@ public class MainActivity extends Activity {
             android.webkit.CookieManager.getInstance().flush();
         } catch (Exception ignored) {}
     }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        fcFlushWebViewData();
-    }
-
-    @Override
-    protected void onStop() {
-        super.onStop();
-        fcFlushWebViewData();
-    }
-
-    @Override
-    protected void onDestroy() {
-        fcFlushWebViewData();
-        super.onDestroy();
-    }
-
-
-
-    private void injectFamilyCloudDeviceButtons() {
+private void injectFamilyCloudDeviceButtons() {
         String js =
                 "(function() {" +
                 "  if (window.__fcApkDeviceButtonsInjected) return;" +
@@ -655,4 +638,60 @@ public class MainActivity extends Activity {
             CookieManager.getInstance().flush();
         } catch (Exception ignored) {}
     }
+
+    private void fcSaveCurrentCookies() {
+        try {
+            String base = currentBaseUrl;
+
+            if (base == null || base.trim().isEmpty()) {
+                base = prefs.getString(KEY_BASE_URL, "");
+            }
+
+            if (base != null && !base.trim().isEmpty()) {
+                String cookie = CookieManager.getInstance().getCookie(base);
+
+                if (cookie != null && !cookie.trim().isEmpty()) {
+                    prefs.edit()
+                            .putString(KEY_COOKIE, cookie)
+                            .putString(KEY_BASE_URL, cleanUrl(base))
+                            .apply();
+                }
+            }
+
+            CookieManager.getInstance().flush();
+        } catch (Exception ignored) {}
+    }
+
+    private void fcRestoreCookies(String baseUrl) {
+        try {
+            if (baseUrl == null || baseUrl.trim().isEmpty()) return;
+
+            String cookie = prefs.getString(KEY_COOKIE, "");
+
+            if (cookie != null && !cookie.trim().isEmpty()) {
+                CookieManager.getInstance().setAcceptCookie(true);
+                CookieManager.getInstance().setCookie(baseUrl, cookie);
+                CookieManager.getInstance().flush();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    protected void onPause() {
+        fcSaveCurrentCookies();
+        super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        fcSaveCurrentCookies();
+        super.onStop();
+    }
+
+    @Override
+    protected void onDestroy() {
+        fcSaveCurrentCookies();
+        super.onDestroy();
+    }
+
 }
