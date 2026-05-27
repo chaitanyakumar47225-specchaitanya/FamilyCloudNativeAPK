@@ -118,7 +118,8 @@ public class MainActivity extends Activity {
                     .apply();
 
             showWebView();
-            webView.loadUrl(ONLINE_URL + "/login");
+            fcRestoreCookieForBase(ONLINE_URL);
+                webView.loadUrl(ONLINE_URL + "/dashboard");
         });
 
         offline.setOnClickListener(v -> showOfflineChoiceScreen());
@@ -286,6 +287,7 @@ public class MainActivity extends Activity {
 
         autoSync.setOnClickListener(v -> {
             saveCookieForBase(currentBaseUrl);
+                    fcSaveCookieForBase(currentBaseUrl);
                     android.webkit.CookieManager.getInstance().flush();
             Intent intent = new Intent(this, BackupActivity.class);
             startActivity(intent);
@@ -323,7 +325,8 @@ public class MainActivity extends Activity {
 
         retry.setOnClickListener(v -> {
             showWebView();
-            webView.loadUrl(currentBaseUrl + "/login");
+            fcRestoreCookieForBase(currentBaseUrl);
+        webView.loadUrl(currentBaseUrl + "/dashboard");
         });
 
         switchMode.setOnClickListener(v -> showStartupModeScreen());
@@ -394,6 +397,7 @@ public class MainActivity extends Activity {
 
                 if (url != null && url.toLowerCase().contains("/dashboard")) {
                     saveCookieForBase(currentBaseUrl);
+                    fcSaveCookieForBase(currentBaseUrl);
                     android.webkit.CookieManager.getInstance().flush();
                 }
             }
@@ -613,6 +617,61 @@ public class MainActivity extends Activity {
         public void openBackupSettings() {
             runOnUiThread(() -> startActivity(new Intent(MainActivity.this, BackupActivity.class)));
         }
+    }
+
+
+    private void fcRestoreCookieForBase(String baseUrl) {
+        try {
+            String cookie = prefs.getString(KEY_COOKIE, "");
+            if (cookie != null && !cookie.trim().isEmpty() && baseUrl != null && !baseUrl.trim().isEmpty()) {
+                CookieManager.getInstance().setAcceptCookie(true);
+                CookieManager.getInstance().setCookie(baseUrl, cookie);
+                CookieManager.getInstance().flush();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void fcSaveCookieForBase(String baseUrl) {
+        try {
+            if (baseUrl == null || baseUrl.trim().isEmpty()) return;
+
+            String cookie = CookieManager.getInstance().getCookie(baseUrl);
+
+            if (cookie != null && !cookie.trim().isEmpty()) {
+                prefs.edit()
+                        .putString(KEY_COOKIE, cookie)
+                        .putString(KEY_BASE_URL, cleanUrl(baseUrl))
+                        .apply();
+
+                CookieManager.getInstance().flush();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void fcFlushWebViewDataStrong() {
+        try {
+            String base = prefs.getString(KEY_BASE_URL, currentBaseUrl);
+            fcSaveCookieForBase(base);
+            CookieManager.getInstance().flush();
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    protected void onPause() {
+        fcFlushWebViewDataStrong();
+        super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        fcFlushWebViewDataStrong();
+        super.onStop();
+    }
+
+    @Override
+    protected void onDestroy() {
+        fcFlushWebViewDataStrong();
+        super.onDestroy();
     }
 
 }
