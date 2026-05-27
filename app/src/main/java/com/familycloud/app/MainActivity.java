@@ -12,6 +12,7 @@ import android.os.Environment;
 import android.view.Gravity;
 import android.view.View;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
@@ -349,6 +350,7 @@ public class MainActivity extends Activity {
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
 
         android.webkit.CookieManager.getInstance().setAcceptCookie(true);
+        webView.addJavascriptInterface(new FamilyCloudDeviceBridge(), "FamilyCloudDevice");
 
         if (android.os.Build.VERSION.SDK_INT >= 21) {
             android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -532,6 +534,45 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         fcFlushWebViewData();
         super.onDestroy();
+    }
+
+
+    private class FamilyCloudDeviceBridge {
+        @JavascriptInterface
+        public void enableBackgroundSync(String serverUrl) {
+            runOnUiThread(() -> {
+                try {
+                    prefs.edit()
+                            .putString(KEY_BASE_URL, cleanUrl(serverUrl))
+                            .apply();
+                } catch (Exception ignored) {}
+
+                startActivity(new Intent(MainActivity.this, BackupActivity.class));
+            });
+        }
+
+        @JavascriptInterface
+        public void runSyncNow(String serverUrl) {
+            runOnUiThread(() -> {
+                try {
+                    prefs.edit()
+                            .putString(KEY_BASE_URL, cleanUrl(serverUrl))
+                            .apply();
+                } catch (Exception ignored) {}
+
+                startActivity(new Intent(MainActivity.this, BackupActivity.class));
+            });
+        }
+
+        @JavascriptInterface
+        public void freeSpaceOnDevice() {
+            runOnUiThread(() -> startActivity(new Intent(MainActivity.this, BackupActivity.class)));
+        }
+
+        @JavascriptInterface
+        public void openBackupSettings() {
+            runOnUiThread(() -> startActivity(new Intent(MainActivity.this, BackupActivity.class)));
+        }
     }
 
 }
