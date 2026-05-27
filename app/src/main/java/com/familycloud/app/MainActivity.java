@@ -655,23 +655,4 @@ public class MainActivity extends Activity {
             CookieManager.getInstance().flush();
         } catch (Exception ignored) {}
     }
-
-    @Override
-    protected void onPause() {
-        fcFlushWebViewDataStrong();
-        super.onPause();
-    }
-
-    @Override
-    protected void onStop() {
-        fcFlushWebViewDataStrong();
-        super.onStop();
-    }
-
-    @Override
-    protected void onDestroy() {
-        fcFlushWebViewDataStrong();
-        super.onDestroy();
-    }
-
 }
