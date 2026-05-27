@@ -390,6 +390,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 updateNativeNavVisibility(url);
+                injectFamilyCloudDeviceButtons();
 
                 if (url != null && url.toLowerCase().contains("/dashboard")) {
                     saveCookieForBase(currentBaseUrl);
@@ -534,6 +535,45 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         fcFlushWebViewData();
         super.onDestroy();
+    }
+
+
+
+    private void injectFamilyCloudDeviceButtons() {
+        String js =
+                "(function() {" +
+                "  if (window.__fcApkDeviceButtonsInjected) return;" +
+                "  window.__fcApkDeviceButtonsInjected = true;" +
+                "  function ready() {" +
+                "    if (!window.FamilyCloudDevice) return;" +
+                "    var path = String(location.pathname || '').toLowerCase();" +
+                "    if (!(path.indexOf('/dashboard') >= 0 || path.indexOf('/upload') >= 0)) return;" +
+                "    if (document.getElementById('fcApkDeviceTools')) return;" +
+                "    var box = document.createElement('div');" +
+                "    box.id = 'fcApkDeviceTools';" +
+                "    box.style.cssText = 'margin:14px;padding:14px;border-radius:18px;background:linear-gradient(135deg,#421f14,#160a08);border:1px solid rgba(245,158,11,.55);box-shadow:0 8px 20px rgba(0,0,0,.25);';" +
+                "    box.innerHTML = '' +" +
+                "      '<h3 style=\"margin:0 0 10px;color:#fbbf24;font-size:20px;\">APK Device Tools</h3>' +" +
+                "      '<button id=\"fcApkBackupBtn\" type=\"button\" style=\"width:100%;margin:6px 0;border:0;border-radius:14px;padding:13px;font-weight:900;color:white;background:linear-gradient(90deg,#dc2626,#f59e0b);\">Background Backup</button>' +" +
+                "      '<button id=\"fcApkFreeSpaceBtn\" type=\"button\" style=\"width:100%;margin:6px 0;border:0;border-radius:14px;padding:13px;font-weight:900;color:white;background:linear-gradient(90deg,#7f1d1d,#ef4444);\">Free Up Gallery Space</button>'; " +
+                "    var target = document.querySelector('form[action=\"/upload\"], form, main, .container, body');" +
+                "    if (target && target.parentNode && target !== document.body) {" +
+                "      target.parentNode.insertBefore(box, target);" +
+                "    } else {" +
+                "      document.body.insertBefore(box, document.body.firstChild);" +
+                "    }" +
+                "    document.getElementById('fcApkBackupBtn').onclick = function() {" +
+                "      window.FamilyCloudDevice.enableBackgroundSync(location.origin);" +
+                "    };" +
+                "    document.getElementById('fcApkFreeSpaceBtn').onclick = function() {" +
+                "      window.FamilyCloudDevice.freeSpaceOnDevice();" +
+                "    };" +
+                "  }" +
+                "  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);" +
+                "  else ready();" +
+                "})();";
+
+        webView.evaluateJavascript(js, null);
     }
 
 
