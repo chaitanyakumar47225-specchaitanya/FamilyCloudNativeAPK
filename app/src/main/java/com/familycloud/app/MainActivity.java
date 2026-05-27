@@ -280,11 +280,12 @@ public class MainActivity extends Activity {
 
         home.setOnClickListener(v -> webView.loadUrl(currentBaseUrl + "/dashboard"));
         gallery.setOnClickListener(v -> webView.loadUrl(currentBaseUrl + "/gallery"));
-        upload.setOnClickListener(v -> webView.loadUrl(currentBaseUrl + "/upload"));
+        upload.setOnClickListener(v -> webView.loadUrl(currentBaseUrl + "/dashboard#upload"));
         account.setOnClickListener(v -> webView.loadUrl(currentBaseUrl + "/account"));
 
         autoSync.setOnClickListener(v -> {
             saveCookieForBase(currentBaseUrl);
+                    android.webkit.CookieManager.getInstance().flush();
             Intent intent = new Intent(this, BackupActivity.class);
             startActivity(intent);
         });
@@ -339,6 +340,23 @@ public class MainActivity extends Activity {
     }
 
     private void setupWebView() {
+        // FC_PERSISTENT_WEBVIEW_DATA_V1
+        webView.getSettings().setJavaScriptEnabled(true);
+        webView.getSettings().setDomStorageEnabled(true);
+        webView.getSettings().setDatabaseEnabled(true);
+        webView.getSettings().setCacheMode(android.webkit.WebSettings.LOAD_DEFAULT);
+        webView.getSettings().setLoadsImagesAutomatically(true);
+        webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+
+        android.webkit.CookieManager.getInstance().setAcceptCookie(true);
+
+        if (android.os.Build.VERSION.SDK_INT >= 21) {
+            android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        }
+
+        android.webkit.CookieManager.getInstance().flush();
+
+
         WebSettings settings = webView.getSettings();
 
         settings.setJavaScriptEnabled(true);
@@ -373,6 +391,7 @@ public class MainActivity extends Activity {
 
                 if (url != null && url.toLowerCase().contains("/dashboard")) {
                     saveCookieForBase(currentBaseUrl);
+                    android.webkit.CookieManager.getInstance().flush();
                 }
             }
 
@@ -490,4 +509,29 @@ public class MainActivity extends Activity {
 
         super.onActivityResult(requestCode, resultCode, intent);
     }
+
+    private void fcFlushWebViewData() {
+        try {
+            android.webkit.CookieManager.getInstance().flush();
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        fcFlushWebViewData();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        fcFlushWebViewData();
+    }
+
+    @Override
+    protected void onDestroy() {
+        fcFlushWebViewData();
+        super.onDestroy();
+    }
+
 }
