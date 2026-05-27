@@ -45,24 +45,24 @@ public class BackupActivity extends Activity {
         root.setBackgroundColor(Color.rgb(18, 5, 5));
 
         TextView title = new TextView(this);
-        title.setText("Auto Sync Settings");
+        title.setText("Background Backup");
         title.setTextColor(Color.WHITE);
         title.setTextSize(28);
         title.setPadding(0, 0, 0, 18);
 
         TextView info = new TextView(this);
-        info.setText("Auto Sync controls are saved here. Full background upload worker will be added after APK opens stable.");
+        info.setText("Enable background backup, sync now, or clear phone space after files are uploaded to Family Cloud.");
         info.setTextColor(Color.rgb(255, 210, 122));
         info.setTextSize(15);
         info.setPadding(0, 0, 0, 18);
 
-        CheckBox enable = makeBox("Enable Auto Sync / Background Backup", KEY_ENABLED, false);
+        CheckBox enable = makeBox("Enable Background Backup", KEY_ENABLED, false);
         CheckBox wifi = makeBox("Upload only on Wi-Fi", KEY_WIFI_ONLY, true);
         CheckBox photos = makeBox("Backup Photos", KEY_PHOTOS, true);
         CheckBox videos = makeBox("Backup Videos", KEY_VIDEOS, true);
 
         Button save = new Button(this);
-        save.setText("Save Settings");
+        save.setText("Enable / Save Background Backup");
         save.setOnClickListener(v -> {
             prefs.edit()
                     .putBoolean(KEY_ENABLED, enable.isChecked())
@@ -106,7 +106,7 @@ public class BackupActivity extends Activity {
         });
 
         Button free = new Button(this);
-        free.setText("Free Up Space On This Device");
+        free.setText("Clear Phone Space");
         free.setOnClickListener(v -> FreeSpaceManager.start(this));
 
         Button back = new Button(this);
