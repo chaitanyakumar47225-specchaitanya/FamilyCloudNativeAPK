@@ -48,6 +48,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -57,6 +58,10 @@ public class MainActivity extends Activity {
 
     public static final String PREFS = "family_cloud_prefs";
     public static final String KEY_COOKIE = "cookie";
+    public static final String KEY_LOGIN_OK = "login_ok";
+    public static final String KEY_ONLINE_COOKIE = "cookie_online";
+    public static final String KEY_OFFLINE_COOKIE = "cookie_offline";
+    public static final String KEY_LOGIN_EMAIL = "login_email";
     public static final String ONLINE_URL = "";
     public static final String LOCAL_URL = "";
 
@@ -190,6 +195,215 @@ public class MainActivity extends Activity {
         lp.setMargins(dp(2), 0, dp(2), 0);
         nav.addView(b, lp);
     }
+
+
+    private void showLoginGate() {
+        String savedCookie = getActiveCookie();
+        boolean loginOk = prefs.getBoolean(KEY_LOGIN_OK, false);
+
+        if (loginOk && savedCookie != null && savedCookie.trim().length() > 0) {
+            topBar.setVisibility(View.VISIBLE);
+            bottomNav.setVisibility(View.VISIBLE);
+            showHome();
+            return;
+        }
+
+        showLoginScreen();
+    }
+
+    private void showLoginScreen() {
+        topBar.setVisibility(View.GONE);
+        bottomNav.setVisibility(View.GONE);
+
+        LinearLayout box = baseNoTitle();
+        box.setPadding(dp(22), dp(34), dp(22), dp(22));
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        TextView icon = new TextView(this);
+        icon.setText("🔐");
+        icon.setTextSize(54);
+        icon.setGravity(Gravity.CENTER);
+        box.addView(icon);
+
+        TextView title = new TextView(this);
+        title.setText("Login Required");
+        title.setTextColor(TEXT);
+        title.setTextSize(28);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        box.addView(title);
+
+        TextView info = small("Mode: " + currentMode + "\nServer: " + baseUrl + "\nLogin once. After success, this APK keeps your session saved.");
+        info.setGravity(Gravity.CENTER);
+        box.addView(card("Connection", info));
+
+        final EditText email = new EditText(this);
+        email.setSingleLine(true);
+        email.setHint("Email / username");
+        email.setText(prefs.getString(KEY_LOGIN_EMAIL, ""));
+        email.setTextColor(TEXT);
+        email.setHintTextColor(MUTED);
+        email.setPadding(dp(14), 0, dp(14), 0);
+        email.setBackground(round(CARD2, dp(18), YELLOW, 1));
+
+        final EditText password = new EditText(this);
+        password.setSingleLine(true);
+        password.setHint("Password");
+        password.setTextColor(TEXT);
+        password.setHintTextColor(MUTED);
+        password.setPadding(dp(14), 0, dp(14), 0);
+        password.setInputType(0x00000081);
+        password.setBackground(round(CARD2, dp(18), YELLOW, 1));
+
+        box.addView(small("Email / Username"));
+        box.addView(email, new LinearLayout.LayoutParams(-1, dp(54)));
+        box.addView(small("Password"));
+        box.addView(password, new LinearLayout.LayoutParams(-1, dp(54)));
+
+        Button login = button("Login and Continue", YELLOW, Color.BLACK);
+        login.setTextSize(15);
+        login.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                String e = email.getText().toString().trim();
+                String pass = password.getText().toString();
+
+                if (e.length() == 0) {
+                    toast("Enter email / username");
+                    return;
+                }
+
+                doLogin(e, pass);
+            }
+        });
+        box.addView(login, bigLp());
+
+        Button back = button("Go Back", CARD2, TEXT);
+        back.setTextSize(15);
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                showSavedUrlScreen(currentMode);
+            }
+        });
+        box.addView(back, bigLp());
+
+        setScreen(scroll(box));
+    }
+
+    private void doLogin(final String email, final String password) {
+        toast("Logging in...");
+
+        io.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    try {
+                        postLoginSync("/login", email, password);
+                    } catch (Exception first) {
+                        postLoginSync("/api/login", email, password);
+                    }
+
+                    prefs.edit()
+                            .putString(KEY_LOGIN_EMAIL, email)
+                            .putBoolean(KEY_LOGIN_OK, true)
+                            .apply();
+
+                    ui.post(new Runnable() {
+                        @Override public void run() {
+                            toast("Login saved");
+                            topBar.setVisibility(View.VISIBLE);
+                            bottomNav.setVisibility(View.VISIBLE);
+                            showHome();
+                        }
+                    });
+                } catch (final Exception e) {
+                    ui.post(new Runnable() {
+                        @Override public void run() {
+                            toast("Login failed: " + e.getMessage());
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void postLoginSync(String endpoint, String email, String password) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(abs(endpoint)).openConnection();
+        c.setConnectTimeout(12000);
+        c.setReadTimeout(20000);
+        c.setDoInput(true);
+        c.setDoOutput(true);
+        c.setUseCaches(false);
+        c.setRequestMethod("POST");
+        c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+        applySavedCookie(c);
+
+        String body = "email=" + URLEncoder.encode(email, "UTF-8")
+                + "&username=" + URLEncoder.encode(email, "UTF-8")
+                + "&password=" + URLEncoder.encode(password, "UTF-8");
+
+        DataOutputStream out = new DataOutputStream(c.getOutputStream());
+        out.writeBytes(body);
+        out.flush();
+        out.close();
+
+        int code = c.getResponseCode();
+        saveCookieFromResponse(c);
+
+        InputStream response = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
+        String text = read(response);
+
+        if (code < 200 || code >= 300) {
+            throw new Exception("HTTP " + code + ": " + text);
+        }
+
+        String cookie = getActiveCookie();
+        if (cookie == null || cookie.trim().length() == 0) {
+            // Some backends return success without Set-Cookie. Keep login flag anyway.
+            prefs.edit().putBoolean(KEY_LOGIN_OK, true).apply();
+        }
+    }
+
+    private String getActiveCookieKey() {
+        if (MODE_ONLINE.equals(currentMode)) return KEY_ONLINE_COOKIE;
+        return KEY_OFFLINE_COOKIE;
+    }
+
+    private String getActiveCookie() {
+        String modeCookie = prefs.getString(getActiveCookieKey(), "");
+        if (modeCookie != null && modeCookie.trim().length() > 0) return modeCookie;
+        return prefs.getString(KEY_COOKIE, "");
+    }
+
+    private void applySavedCookie(HttpURLConnection c) {
+        String cookie = getActiveCookie();
+        if (cookie != null && cookie.trim().length() > 0) {
+            c.setRequestProperty("Cookie", cookie);
+        }
+    }
+
+    private void saveCookieFromResponse(HttpURLConnection c) {
+        String setCookie = c.getHeaderField("Set-Cookie");
+        if (setCookie == null || setCookie.trim().length() == 0) return;
+
+        String cookie = setCookie.split(";", 2)[0].trim();
+        if (cookie.length() == 0) return;
+
+        prefs.edit()
+                .putString(KEY_COOKIE, cookie)
+                .putString(getActiveCookieKey(), cookie)
+                .putBoolean(KEY_LOGIN_OK, true)
+                .apply();
+    }
+
+    private void clearSavedLogin() {
+        prefs.edit()
+                .remove(KEY_COOKIE)
+                .remove(KEY_ONLINE_COOKIE)
+                .remove(KEY_OFFLINE_COOKIE)
+                .remove(KEY_LOGIN_OK)
+                .apply();
+    }
+
 
     private void setScreen(View v) {
         content.removeAllViews();
@@ -588,6 +802,7 @@ public class MainActivity extends Activity {
         c.setRequestMethod("POST");
         c.setRequestProperty("Connection", "Keep-Alive");
         c.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        applySavedCookie(c);
 
         String mime = getContentResolver().getType(fileUri);
         if (mime == null) mime = guessMime(fileName);
@@ -610,6 +825,7 @@ public class MainActivity extends Activity {
         out.close();
 
         int code = c.getResponseCode();
+        saveCookieFromResponse(c);
         String body = read(code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream());
 
         if (code < 200 || code >= 300) throw new Exception("HTTP " + code + ": " + body);
