@@ -27,6 +27,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
 import android.widget.*;
+import android.widget.GridLayout;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -983,13 +984,17 @@ public class MainActivity extends Activity {
                 .setTitle("Delete selected?")
                 .setMessage("Delete " + items.size() + " file(s)? This cannot be undone.")
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("Delete", (d, w) -> runIo(new Job() {
-                    public void run() throws Exception {
-                        for (JSONObject f : items) deleteFileRequest(f);
-                        selected.clear();
-                        runOnUiThread(new Runnable() { public void run() { loadGallery(); }});
+                .setPositiveButton("Delete", new android.content.DialogInterface.OnClickListener() {
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        runIo(new Job() {
+                            public void run() throws Exception {
+                                for (JSONObject f : items) deleteFileRequest(f);
+                                selected.clear();
+                                runOnUiThread(new Runnable() { public void run() { loadGallery(); }});
+                            }
+                        });
                     }
-                }))
+                })
                 .show();
     }
 
@@ -998,12 +1003,16 @@ public class MainActivity extends Activity {
                 .setTitle("Delete file?")
                 .setMessage(fileName(f))
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("Delete", (d, w) -> runIo(new Job() {
-                    public void run() throws Exception {
-                        deleteFileRequest(f);
-                        runOnUiThread(new Runnable() { public void run() { loadGallery(); }});
+                .setPositiveButton("Delete", new android.content.DialogInterface.OnClickListener() {
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        runIo(new Job() {
+                            public void run() throws Exception {
+                                deleteFileRequest(f);
+                                runOnUiThread(new Runnable() { public void run() { loadGallery(); }});
+                            }
+                        });
                     }
-                }))
+                })
                 .show();
     }
 
