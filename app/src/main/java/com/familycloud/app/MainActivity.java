@@ -2,2224 +2,1228 @@ package com.familycloud.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.app.DownloadManager;
 import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
+import android.graphics.Matrix;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.Handler;
-import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.text.InputType;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
-import android.widget.BaseAdapter;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.GridView;
-import android.widget.ImageView;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
+import android.widget.*;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedReader;
-import java.io.DataOutputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.HttpURLConnection;
-import java.net.URL;
 import java.net.URLEncoder;
-import java.util.ArrayList;
-import java.util.Locale;
+import java.net.URL;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+    private static final String PREFS = "family_cloud_native";
+    private static final String DEFAULT_URL = "http://100.109.57.8:3000";
+    private static final int PICK_UPLOAD = 7001;
 
-    public static final String PREFS = "family_cloud_prefs";
-    public static final String KEY_COOKIE = "cookie";
-    public static final String KEY_LOGIN_OK = "login_ok";
-    public static final String KEY_ONLINE_COOKIE = "cookie_online";
-    public static final String KEY_OFFLINE_COOKIE = "cookie_offline";
-    public static final String KEY_LOGIN_EMAIL = "login_email";
-    public static final String ONLINE_URL = "";
-    public static final String LOCAL_URL = "";
-
-    // Compatibility constants for old BackupWorker / FreeSpaceManager code.
-    public static final String PREF_SERVER_URL = "base_url";
-    public static final String SERVER_URL = "base_url";
-    public static final String PREF_BASE_URL = "base_url";
-    public static final String KEY_SERVER_URL = "base_url";
-    public static final String KEY_BASE_URL_PUBLIC = "base_url";
-    public static final String PREF_EMAIL = "email";
-    public static final String KEY_EMAIL = "email";
-    public static final String PREF_USER_EMAIL = "email";
-    public static final String PREF_LOCAL_URL = "local_url";
-    public static final String PREF_ONLINE_URL = "online_url";
-    public static final String PREF_MODE = "mode";
-    public static final String MODE_LOCAL = "local";
-    public static final String MODE_ONLINE = "online";
-
-    public static final String KEY_BASE_URL = "base_url";
-    private static final int PICK_FILES = 4001;
-
-    private static final String ADMIN_CODE = "8757893577";
-
-    private final int BG = Color.rgb(8, 10, 18);
-    private final int CARD = Color.rgb(23, 27, 40);
-    private final int CARD2 = Color.rgb(31, 35, 52);
-    private final int TEXT = Color.rgb(245, 247, 255);
-    private final int MUTED = Color.rgb(168, 174, 190);
-    private final int YELLOW = Color.rgb(255, 204, 51);
-    private final int RED = Color.rgb(255, 72, 72);
+    private final int BG = Color.rgb(5, 0, 0);
+    private final int PANEL = Color.rgb(13, 0, 0);
+    private final int TOP = Color.rgb(17, 17, 17);
+    private final int YELLOW = Color.rgb(255, 190, 0);
+    private final int BORDER = Color.rgb(166, 106, 0);
+    private final int WHITE = Color.WHITE;
+    private final int GREEN = Color.rgb(46, 204, 113);
+    private final int RED = Color.rgb(230, 43, 43);
 
     private SharedPreferences prefs;
+    private ExecutorService io;
+    private LinearLayout root;
+    private LinearLayout content;
     private String baseUrl;
+    private String cookie;
+    private String currentEmail = "";
+    private boolean offlineMode = false;
 
-    private FrameLayout content;
-    private final Handler ui = new Handler(Looper.getMainLooper());
-    private final ExecutorService io = Executors.newFixedThreadPool(4);
+    private ArrayList<JSONObject> allMedia = new ArrayList<>();
+    private ArrayList<JSONObject> filteredMedia = new ArrayList<>();
+    private HashSet<String> selected = new HashSet<>();
+    private int page = 1;
+    private int pageSize = 30;
+    private String filter = "all";
+    private boolean selectMode = false;
 
-    private TextView uploadStatus;
-    private ProgressBar uploadProgress;
-    private TextView uploadFailures;
+    private TextView pageInfoTop;
+    private TextView pageInfoBottom;
+    private TextView galleryStatus;
+    private GridLayout galleryGrid;
+    private LinearLayout floatingSelectBar;
 
-    private final ArrayList<FileItem> galleryFiles = new ArrayList<>();
-    private GalleryAdapter galleryAdapter;
+    private int previewIndex = -1;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-
-        Window w = getWindow();
-        w.setStatusBarColor(BG);
-        w.setNavigationBarColor(BG);
-
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        baseUrl = prefs.getString(KEY_BASE_URL, "");
-
-        requestBasicPermissions();
-        buildShell();
-
-        if (baseUrl == null || baseUrl.trim().isEmpty()) {
-            showSetupDialog();
-        } else {
-            showHome();
-        }
-    }
-
-    private void requestBasicPermissions() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            requestPermissions(new String[]{
-                    "android.permission.READ_MEDIA_IMAGES",
-                    "android.permission.READ_MEDIA_VIDEO",
-                    "android.permission.POST_NOTIFICATIONS"
-            }, 11);
-        } else if (Build.VERSION.SDK_INT >= 23) {
-            if (checkSelfPermission("android.permission.READ_EXTERNAL_STORAGE") != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{"android.permission.READ_EXTERNAL_STORAGE"}, 10);
-            }
-        }
-    }
-
-    private void buildShell() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
-
-        LinearLayout top = new LinearLayout(this);
-        top.setOrientation(LinearLayout.VERTICAL);
-        top.setPadding(dp(18), dp(16), dp(18), dp(10));
-
-        TextView name = new TextView(this);
-        name.setText("Family Cloud");
-        name.setTextColor(TEXT);
-        name.setTextSize(25);
-        name.setTypeface(Typeface.DEFAULT_BOLD);
-
-        TextView sub = new TextView(this);
-        sub.setText("Native APK · Backup · Gallery · Storage");
-        sub.setTextColor(MUTED);
-        sub.setTextSize(13);
-
-        top.addView(name);
-        top.addView(sub);
-
-        content = new FrameLayout(this);
-        content.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1));
-
-        LinearLayout nav = new LinearLayout(this);
-        nav.setOrientation(LinearLayout.HORIZONTAL);
-        nav.setPadding(dp(5), dp(8), dp(5), dp(8));
-        nav.setBackgroundColor(Color.rgb(12, 14, 24));
-
-        addNav(nav, "Home", v -> showHome());
-        addNav(nav, "Gallery", v -> showGallery());
-        addNav(nav, "Backup", v -> showBackup());
-        addNav(nav, "Storage", v -> showStorage());
-        addNav(nav, "Admin", v -> showAdmin());
-        addNav(nav, "Settings", v -> showSettings());
-
-        root.addView(top);
-        root.addView(content);
-        root.addView(nav);
-
-        setContentView(root);
-    }
-
-    private void addNav(LinearLayout nav, String text, View.OnClickListener l) {
-        Button b = button(text, CARD2, TEXT);
-        b.setTextSize(10);
-        b.setPadding(0, dp(7), 0, dp(7));
-        b.setOnClickListener(l);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(50), 1);
-        lp.setMargins(dp(2), 0, dp(2), 0);
-        nav.addView(b, lp);
-    }
-
-
-    private void showLoginGate() {
-        String savedCookie = getActiveCookie();
-        boolean loginOk = prefs.getBoolean(KEY_LOGIN_OK, false);
-
-        if (loginOk && savedCookie != null && savedCookie.trim().length() > 0) {
-            topBar.setVisibility(View.VISIBLE);
-            bottomNav.setVisibility(View.VISIBLE);
-            showHome();
-            return;
-        }
-
-        showLoginScreen();
-    }
-
-    private void showLoginScreen() {
-        topBar.setVisibility(View.GONE);
-        bottomNav.setVisibility(View.GONE);
-
-        LinearLayout box = baseNoTitle();
-        box.setPadding(dp(22), dp(34), dp(22), dp(22));
-        box.setGravity(Gravity.CENTER_HORIZONTAL);
-
-        TextView icon = new TextView(this);
-        icon.setText("🔐");
-        icon.setTextSize(54);
-        icon.setGravity(Gravity.CENTER);
-        box.addView(icon);
-
-        TextView title = new TextView(this);
-        title.setText("Login Required");
-        title.setTextColor(TEXT);
-        title.setTextSize(28);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setGravity(Gravity.CENTER);
-        box.addView(title);
-
-        TextView info = small("Mode: " + currentMode + "\nServer: " + baseUrl + "\nLogin once. After success, this APK keeps your session saved.");
-        info.setGravity(Gravity.CENTER);
-        box.addView(card("Connection", info));
-
-        final EditText email = new EditText(this);
-        email.setSingleLine(true);
-        email.setHint("Email / username");
-        email.setText(prefs.getString(KEY_LOGIN_EMAIL, ""));
-        email.setTextColor(TEXT);
-        email.setHintTextColor(MUTED);
-        email.setPadding(dp(14), 0, dp(14), 0);
-        email.setBackground(round(CARD2, dp(18), YELLOW, 1));
-
-        final EditText password = new EditText(this);
-        password.setSingleLine(true);
-        password.setHint("Password");
-        password.setTextColor(TEXT);
-        password.setHintTextColor(MUTED);
-        password.setPadding(dp(14), 0, dp(14), 0);
-        password.setInputType(0x00000081);
-        password.setBackground(round(CARD2, dp(18), YELLOW, 1));
-
-        box.addView(small("Email / Username"));
-        box.addView(email, new LinearLayout.LayoutParams(-1, dp(54)));
-        box.addView(small("Password"));
-        box.addView(password, new LinearLayout.LayoutParams(-1, dp(54)));
-
-        Button login = button("Login and Continue", YELLOW, Color.BLACK);
-        login.setTextSize(15);
-        login.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                String e = email.getText().toString().trim();
-                String pass = password.getText().toString();
-
-                if (e.length() == 0) {
-                    toast("Enter email / username");
-                    return;
-                }
-
-                doLogin(e, pass);
-            }
-        });
-        box.addView(login, bigLp());
-
-        Button back = button("Go Back", CARD2, TEXT);
-        back.setTextSize(15);
-        back.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                showSavedUrlScreen(currentMode);
-            }
-        });
-        box.addView(back, bigLp());
-
-        setScreen(scroll(box));
-    }
-
-    private void doLogin(final String email, final String password) {
-        toast("Logging in...");
-
-        io.execute(new Runnable() {
-            @Override public void run() {
-                try {
-                    try {
-                        postLoginSync("/login", email, password);
-                    } catch (Exception first) {
-                        postLoginSync("/api/login", email, password);
-                    }
-
-                    prefs.edit()
-                            .putString(KEY_LOGIN_EMAIL, email)
-                            .putBoolean(KEY_LOGIN_OK, true)
-                            .apply();
-
-                    ui.post(new Runnable() {
-                        @Override public void run() {
-                            toast("Login saved");
-                            topBar.setVisibility(View.VISIBLE);
-                            bottomNav.setVisibility(View.VISIBLE);
-                            showHome();
-                        }
-                    });
-                } catch (final Exception e) {
-                    ui.post(new Runnable() {
-                        @Override public void run() {
-                            toast("Login failed: " + e.getMessage());
-                        }
-                    });
-                }
-            }
-        });
-    }
-
-    private void postLoginSync(String endpoint, String email, String password) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(abs(endpoint)).openConnection();
-        c.setConnectTimeout(12000);
-        c.setReadTimeout(20000);
-        c.setDoInput(true);
-        c.setDoOutput(true);
-        c.setUseCaches(false);
-        c.setRequestMethod("POST");
-        c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-        applySavedCookie(c);
-
-        String body = "email=" + URLEncoder.encode(email, "UTF-8")
-                + "&username=" + URLEncoder.encode(email, "UTF-8")
-                + "&password=" + URLEncoder.encode(password, "UTF-8");
-
-        DataOutputStream out = new DataOutputStream(c.getOutputStream());
-        out.writeBytes(body);
-        out.flush();
-        out.close();
-
-        int code = c.getResponseCode();
-        saveCookieFromResponse(c);
-
-        InputStream response = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
-        String text = read(response);
-
-        if (code < 200 || code >= 300) {
-            throw new Exception("HTTP " + code + ": " + text);
-        }
-
-        String cookie = getActiveCookie();
-        if (cookie == null || cookie.trim().length() == 0) {
-            // Some backends return success without Set-Cookie. Keep login flag anyway.
-            prefs.edit().putBoolean(KEY_LOGIN_OK, true).apply();
-        }
-    }
-
-    private String getActiveCookieKey() {
-        if (MODE_ONLINE.equals(currentMode)) return KEY_ONLINE_COOKIE;
-        return KEY_OFFLINE_COOKIE;
-    }
-
-    private String getActiveCookie() {
-        String modeCookie = prefs.getString(getActiveCookieKey(), "");
-        if (modeCookie != null && modeCookie.trim().length() > 0) return modeCookie;
-        return prefs.getString(KEY_COOKIE, "");
-    }
-
-    private void applySavedCookie(HttpURLConnection c) {
-        String cookie = getActiveCookie();
-        if (cookie != null && cookie.trim().length() > 0) {
-            c.setRequestProperty("Cookie", cookie);
-        }
-    }
-
-    private void saveCookieFromResponse(HttpURLConnection c) {
-        String setCookie = c.getHeaderField("Set-Cookie");
-        if (setCookie == null || setCookie.trim().length() == 0) return;
-
-        String cookie = setCookie.split(";", 2)[0].trim();
-        if (cookie.length() == 0) return;
-
-        prefs.edit()
-                .putString(KEY_COOKIE, cookie)
-                .putString(getActiveCookieKey(), cookie)
-                .putBoolean(KEY_LOGIN_OK, true)
-                .apply();
-    }
-
-    private void clearSavedLogin() {
-        prefs.edit()
-                .remove(KEY_COOKIE)
-                .remove(KEY_ONLINE_COOKIE)
-                .remove(KEY_OFFLINE_COOKIE)
-                .remove(KEY_LOGIN_OK)
-                .apply();
-    }
-
-
-    private void setScreen(View v) {
-        content.removeAllViews();
-        content.addView(v);
-    }
-
-    private LinearLayout base(String title) {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(16), dp(10), dp(16), dp(20));
-
-        TextView h = new TextView(this);
-        h.setText(title);
-        h.setTextColor(TEXT);
-        h.setTextSize(22);
-        h.setTypeface(Typeface.DEFAULT_BOLD);
-        h.setPadding(0, 0, 0, dp(12));
-        box.addView(h);
-
-        return box;
-    }
-
-    private ScrollView scroll(LinearLayout box) {
-        ScrollView s = new ScrollView(this);
-        s.setFillViewport(true);
-        s.setBackgroundColor(BG);
-        s.addView(box);
-        return s;
-    }
-
-    private void showSetupDialog() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(10), 0, dp(10), 0);
-
-        TextView t = new TextView(this);
-        t.setText("Enter Family Cloud server URL.\nExample: http://192.168.1.15:3000\nDo not add /gallery.");
-        t.setTextColor(Color.DKGRAY);
-
-        EditText input = new EditText(this);
-        input.setSingleLine(true);
-        input.setHint("http://192.168.1.15:3000");
-        input.setText(baseUrl == null ? "" : baseUrl);
-
-        box.addView(t);
-        box.addView(input);
-
-        new AlertDialog.Builder(this)
-                .setTitle("Connect Server")
-                .setView(box)
-                .setCancelable(false)
-                .setPositiveButton("Save", (d, which) -> {
-                    String u = input.getText().toString().trim();
-                    if (u.endsWith("/")) u = u.substring(0, u.length() - 1);
-                    if (!u.startsWith("http")) {
-                        toast("Use full URL like http://192.168.1.15:3000");
-                        showSetupDialog();
-                        return;
-                    }
-                    baseUrl = u;
-                    prefs.edit().putString(KEY_BASE_URL, baseUrl).apply();
-                    showHome();
-                })
-                .show();
-    }
-
-    private void showHome() {
-        LinearLayout box = base("Dashboard");
-
-        TextView server = small("Checking server...");
-        TextView dashboard = small("Loading dashboard...");
-
-        box.addView(card("Server Status", server));
-        box.addView(card("Storage / Backup Summary", dashboard));
-        box.addView(card("Native Mode", small("No WebView. Same Family Cloud purpose, rebuilt as native Android UI.")));
-
-        Button refresh = button("Refresh", YELLOW, Color.BLACK);
-        refresh.setOnClickListener(v -> showHome());
-        box.addView(refresh, lp());
-
-        setScreen(scroll(box));
-
-        getText("/api/health", new TextCallback() {
-            public void ok(String text) { server.setText(pretty(text)); }
-            public void fail(String err) { server.setText("Server not reachable:\n" + err); }
-        });
-
-        getText("/api/dashboard", new TextCallback() {
-            public void ok(String text) { dashboard.setText(pretty(text)); }
-            public void fail(String err) { dashboard.setText("Dashboard API failed:\n" + err); }
-        });
-    }
-
-    private void showGallery() {
-        LinearLayout main = base("Gallery");
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-
-        Button refresh = button("Refresh", YELLOW, Color.BLACK);
-        refresh.setOnClickListener(v -> loadGallery());
-
-        Button upload = button("Upload", RED, Color.WHITE);
-        upload.setOnClickListener(v -> openFilePicker());
-
-        row.addView(refresh, new LinearLayout.LayoutParams(0, dp(48), 1));
-        TextView gap = new TextView(this);
-        row.addView(gap, new LinearLayout.LayoutParams(dp(10), 1));
-        row.addView(upload, new LinearLayout.LayoutParams(0, dp(48), 1));
-
-        GridView grid = new GridView(this);
-        grid.setNumColumns(3);
-        grid.setHorizontalSpacing(dp(4));
-        grid.setVerticalSpacing(dp(4));
-        grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-
-        galleryAdapter = new GalleryAdapter(this, galleryFiles);
-        grid.setAdapter(galleryAdapter);
-        grid.setOnItemClickListener((p, v, pos, id) -> {
-            if (pos >= 0 && pos < galleryFiles.size()) showPreview(galleryFiles.get(pos));
-        });
-
-        main.addView(row);
-        main.addView(small("Native grid preview. It reads /api/files."));
-        main.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1));
-
-        setScreen(main);
-        loadGallery();
-    }
-
-    private void loadGallery() {
-        if (galleryAdapter != null) {
-            galleryFiles.clear();
-            galleryAdapter.notifyDataSetChanged();
-        }
-
-        getText("/api/files", new TextCallback() {
-            public void ok(String text) {
-                galleryFiles.clear();
-                galleryFiles.addAll(parseFiles(text));
-                if (galleryAdapter != null) galleryAdapter.notifyDataSetChanged();
-                if (galleryFiles.isEmpty()) toast("No files returned by /api/files");
-            }
-            public void fail(String err) {
-                toast("Gallery API failed: " + err);
-            }
-        });
-    }
-
-    private void showPreview(FileItem item) {
-        LinearLayout box = base(item.name);
-
-        Button back = button("Back", CARD2, TEXT);
-        back.setOnClickListener(v -> showGallery());
-        box.addView(back, lp());
-
-        if (item.isImage()) {
-            ImageView img = new ImageView(this);
-            img.setBackgroundColor(Color.BLACK);
-            img.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            box.addView(img, new LinearLayout.LayoutParams(-1, dp(430)));
-            loadBitmap(item.url, img);
-        } else {
-            TextView icon = new TextView(this);
-            icon.setText(item.isVideo() ? "🎬 Video" : "📄 File");
-            icon.setTextColor(TEXT);
-            icon.setTextSize(30);
-            icon.setGravity(Gravity.CENTER);
-            icon.setBackground(round(CARD, dp(22), 0, 0));
-            box.addView(icon, new LinearLayout.LayoutParams(-1, dp(220)));
-        }
-
-        box.addView(card("Details", small("Name: " + item.name + "\nType: " + item.mime + "\nSize: " + item.sizeText())));
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-
-        Button open = button("Open", YELLOW, Color.BLACK);
-        open.setOnClickListener(v -> openExternal(item));
-
-        Button download = button("Download", RED, Color.WHITE);
-        download.setOnClickListener(v -> download(item));
-
-        actions.addView(open, new LinearLayout.LayoutParams(0, dp(52), 1));
-        TextView sp = new TextView(this);
-        actions.addView(sp, new LinearLayout.LayoutParams(dp(10), 1));
-        actions.addView(download, new LinearLayout.LayoutParams(0, dp(52), 1));
-        box.addView(actions);
-
-        setScreen(scroll(box));
-    }
-
-    private void showBackup() {
-        LinearLayout box = base("Backup");
-
-        box.addView(card("Manual Backup", small("Choose files from phone. App uploads to /upload and shows progress.")));
-
-        Button pick = button("Choose Files", YELLOW, Color.BLACK);
-        pick.setOnClickListener(v -> openFilePicker());
-        box.addView(pick, lp());
-
-        uploadProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        uploadProgress.setMax(100);
-        box.addView(uploadProgress, lp());
-
-        uploadStatus = small("Waiting for files...");
-        uploadFailures = small("");
-
-        box.addView(card("Progress", uploadStatus));
-        box.addView(card("Failures", uploadFailures));
-
-        setScreen(scroll(box));
-    }
-
-    private void openFilePicker() {
-        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        i.addCategory(Intent.CATEGORY_OPENABLE);
-        i.setType("*/*");
-        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        startActivityForResult(Intent.createChooser(i, "Select files"), PICK_FILES);
-    }
-
-    @Override
-    protected void onActivityResult(int req, int res, Intent data) {
-        super.onActivityResult(req, res, data);
-
-        if (req == PICK_FILES && res == RESULT_OK && data != null) {
-            ArrayList<Uri> list = new ArrayList<>();
-            ClipData clip = data.getClipData();
-
-            if (clip != null) {
-                for (int i = 0; i < clip.getItemCount(); i++) list.add(clip.getItemAt(i).getUri());
-            } else if (data.getData() != null) {
-                list.add(data.getData());
-            }
-
-            if (!list.isEmpty()) {
-                showBackup();
-                uploadFiles(list);
-            }
-        }
-    }
-
-    private void uploadFiles(ArrayList<Uri> uris) {
-        uploadProgress.setMax(uris.size());
-        uploadProgress.setProgress(0);
-        uploadStatus.setText("Starting upload 0 / " + uris.size());
-        uploadFailures.setText("");
-
-        io.execute(() -> {
-            int done = 0;
-            ArrayList<String> failed = new ArrayList<>();
-            long start = System.currentTimeMillis();
-
-            for (Uri uri : uris) {
-                String name = getDisplayName(uri);
-                int next = done + 1;
-                ui.post(() -> uploadStatus.setText("Uploading " + next + " / " + uris.size() + "\n" + name));
-
-                try {
-                    postMultipartSync("/upload", uri, name);
-                } catch (Exception e) {
-                    failed.add(name + " → " + e.getMessage());
-                }
-
-                done++;
-                int finalDone = done;
-                long elapsed = Math.max(1, System.currentTimeMillis() - start);
-                long per = elapsed / finalDone;
-                long rem = per * (uris.size() - finalDone);
-
-                ui.post(() -> {
-                    uploadProgress.setProgress(finalDone);
-                    uploadStatus.setText("Uploaded " + finalDone + " / " + uris.size() + "\nETA: " + formatMillis(rem));
-                    uploadFailures.setText(joinLines(failed));
-                });
-            }
-
-            ui.post(() -> {
-                uploadStatus.setText("Upload complete: " + uris.size() + " files processed.");
-                if (failed.isEmpty()) uploadFailures.setText("No failures.");
-            });
-        });
-    }
-
-
-    private LinearLayout accountPanel() {
-        LinearLayout p = new LinearLayout(this);
-        p.setOrientation(LinearLayout.VERTICAL);
-        p.setPadding(dp(16), dp(16), dp(16), dp(16));
-        p.setBackground(round(Color.rgb(8, 0, 0), dp(16), Color.rgb(170, 105, 0), 1));
-        return p;
-    }
-
-    private TextView accountTitle(String text) {
-        TextView t = new TextView(this);
-        t.setText(text);
-        t.setTextColor(TEXT);
-        t.setTextSize(23);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        return t;
-    }
-
-    private TextView accountBigValue(String text) {
-        TextView t = new TextView(this);
-        t.setText(text);
-        t.setTextColor(TEXT);
-        t.setTextSize(23);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        return t;
-    }
-
-    private View accountStatCard(TextView value, String label) {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setGravity(Gravity.CENTER_VERTICAL);
-        c.setPadding(dp(16), dp(12), dp(16), dp(12));
-        c.setBackground(round(Color.rgb(8, 0, 0), dp(14), Color.rgb(170, 105, 0), 1));
-
-        TextView l = new TextView(this);
-        l.setText(label);
-        l.setTextColor(YELLOW);
-        l.setTextSize(14);
-        l.setTypeface(Typeface.DEFAULT_BOLD);
-
-        c.addView(value);
-        c.addView(l);
-        return c;
-    }
-
-    private EditText accountInput(String hint) {
-        EditText e = new EditText(this);
-        e.setSingleLine(true);
-        e.setHint(hint);
-        e.setTextColor(TEXT);
-        e.setHintTextColor(MUTED);
-        e.setPadding(dp(12), 0, dp(12), 0);
-        e.setBackground(round(Color.rgb(8, 0, 0), dp(12), Color.rgb(170, 105, 0), 1));
-        return e;
-    }
-
-    private void loadAccountStats(final TextView storageUsed, final TextView files, final TextView photosVideos) {
-        getText("/api/dashboard", new TextCallback() {
-            @Override public void ok(String text) {
-                try {
-                    JSONObject obj = new JSONObject(text);
-
-                    String used = accountFindJsonText(obj, new String[]{"realUserUsed", "usedStorage", "used", "storageUsed", "usedText"});
-                    String f = accountFindJsonText(obj, new String[]{"realFiles", "totalFiles", "files", "fileCount"});
-                    String ph = accountFindJsonText(obj, new String[]{"totalPhotos", "photos", "photoCount", "images"});
-                    String vi = accountFindJsonText(obj, new String[]{"totalVideos", "videos", "videoCount"});
-
-                    if (used.length() > 0) storageUsed.setText(used);
-                    else storageUsed.setText("—");
-
-                    if (f.length() > 0) files.setText(f);
-                    else files.setText("—");
-
-                    if (ph.length() > 0 || vi.length() > 0) {
-                        photosVideos.setText(emptyAccount(ph) + " / " + emptyAccount(vi));
-                    } else {
-                        photosVideos.setText("—");
-                    }
-                } catch (Exception e) {
-                    storageUsed.setText("—");
-                    files.setText("—");
-                    photosVideos.setText("—");
-                }
-            }
-
-            @Override public void fail(String err) {
-                storageUsed.setText("—");
-                files.setText("—");
-                photosVideos.setText("—");
-            }
-        });
-    }
-
-    private void loadZipStatus(final TextView status, final ProgressBar progress) {
-        getText("/api/zip-status", new TextCallback() {
-            @Override public void ok(String text) {
-                status.setText(pretty(text));
-                int percent = parseAccountPercent(accountFindJsonTextFromText(text, new String[]{"progress", "percent", "zipProgress"}));
-                if (percent >= 0) progress.setProgress(percent);
-            }
-
-            @Override public void fail(String err) {
-                status.setText("No ZIP requested yet.");
-                progress.setProgress(0);
-            }
-        });
-    }
-
-    private void createZipBackup(final TextView status, final ProgressBar progress) {
-        status.setText("ZIP request sent. Building may take time depending on storage size.");
-        progress.setProgress(5);
-
-        userPostFirst(new String[]{
-                        "/api/zip-backup",
-                        "/api/create-zip",
-                        "/api/zip/create",
-                        "/api/request-zip"
-                },
-                "",
-                new TextCallback() {
-                    @Override public void ok(String text) {
-                        status.setText(pretty(text));
-                        progress.setProgress(25);
-                        toast("ZIP backup requested");
-                    }
-
-                    @Override public void fail(String err) {
-                        status.setText("ZIP request failed:\n" + err);
-                    }
-                });
-    }
-
-    private void downloadFilesOneByOne() {
-        toast("Fetching file list...");
-
-        getText("/api/files", new TextCallback() {
-            @Override public void ok(String text) {
-                ArrayList<FileItem> items = parseFiles(text);
-                int queued = 0;
-
-                for (int i = 0; i < items.size(); i++) {
-                    FileItem item = items.get(i);
-                    if (item.url != null && item.url.length() > 0) {
-                        try {
-                            enqueueDownloadSilent(item);
-                            queued++;
-                        } catch (Exception ignored) {}
-                    }
-                }
-
-                toast("Queued " + queued + " files for download");
-            }
-
-            @Override public void fail(String err) {
-                toast("File list failed: " + err);
-            }
-        });
-    }
-
-    private void enqueueDownloadSilent(FileItem item) throws Exception {
-        DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-        DownloadManager.Request r = new DownloadManager.Request(Uri.parse(item.url));
-        r.setTitle(item.name);
-        r.setDescription("Downloading from Family Cloud");
-        r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-        r.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, item.name);
-        dm.enqueue(r);
-    }
-
-    private void changeAccountPassword(String oldPassword, String newPassword) {
-        if (newPassword == null || newPassword.trim().length() < 4) {
-            toast("New password too short");
-            return;
-        }
-
-        userPostFirst(new String[]{
-                        "/api/change-password",
-                        "/api/account/change-password",
-                        "/api/account/password",
-                        "/change-password"
-                },
-                "oldPassword=" + accountEnc(oldPassword) + "&newPassword=" + accountEnc(newPassword),
-                new TextCallback() {
-                    @Override public void ok(String text) {
-                        toast("Password changed");
-                    }
-
-                    @Override public void fail(String err) {
-                        toast("Password change failed: " + err);
-                    }
-                });
-    }
-
-    private void deleteAllMyData() {
-        userPostFirst(new String[]{
-                        "/api/delete-all",
-                        "/delete-all",
-                        "/api/account/delete-all",
-                        "/api/user/delete-all"
-                },
-                "confirm=DELETE",
-                new TextCallback() {
-                    @Override public void ok(String text) {
-                        toast("All data delete request completed");
-                        showAccount();
-                    }
-
-                    @Override public void fail(String err) {
-                        toast("Delete failed: " + err);
-                    }
-                });
-    }
-
-    private void userPostFirst(final String[] endpoints, final String body, final TextCallback cb) {
-        io.execute(new Runnable() {
-            @Override public void run() {
-                String lastErr = "";
-
-                for (int i = 0; i < endpoints.length; i++) {
-                    try {
-                        HttpURLConnection c = (HttpURLConnection) new URL(abs(endpoints[i])).openConnection();
-                        applySavedCookie(c);
-                        c.setConnectTimeout(12000);
-                        c.setReadTimeout(30000);
-                        c.setDoInput(true);
-                        c.setDoOutput(true);
-                        c.setUseCaches(false);
-                        c.setRequestMethod("POST");
-                        c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-                        DataOutputStream out = new DataOutputStream(c.getOutputStream());
-                        out.writeBytes(body == null ? "" : body);
-                        out.flush();
-                        out.close();
-
-                        int code = c.getResponseCode();
-                        saveCookieFromResponse(c);
-
-                        final String response = read(code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream());
-
-                        if (code >= 200 && code < 300) {
-                            ui.post(new Runnable() {
-                                @Override public void run() {
-                                    cb.ok(response);
-                                }
-                            });
-                            return;
-                        }
-
-                        lastErr = endpoints[i] + " → HTTP " + code + " " + response;
-                    } catch (Exception e) {
-                        lastErr = endpoints[i] + " → " + e.getMessage();
-                    }
-                }
-
-                final String err = lastErr;
-                ui.post(new Runnable() {
-                    @Override public void run() {
-                        cb.fail(err);
-                    }
-                });
-            }
-        });
-    }
-
-    private String accountFindJsonTextFromText(String text, String[] keys) {
-        try {
-            String s = text.trim();
-            if (s.startsWith("{")) return accountFindJsonText(new JSONObject(s), keys);
-            if (s.startsWith("[")) return accountFindJsonText(new JSONArray(s), keys);
-        } catch (Exception ignored) {}
-        return "";
-    }
-
-    private String accountFindJsonText(Object node, String[] keys) {
-        try {
-            if (node instanceof JSONObject) {
-                JSONObject o = (JSONObject) node;
-
-                for (int i = 0; i < keys.length; i++) {
-                    String k = keys[i];
-                    if (o.has(k) && !o.isNull(k)) {
-                        Object v = o.get(k);
-                        if (!(v instanceof JSONObject) && !(v instanceof JSONArray)) {
-                            return String.valueOf(v);
-                        }
-                    }
-                }
-
-                JSONArray names = o.names();
-                if (names != null) {
-                    for (int i = 0; i < names.length(); i++) {
-                        String found = accountFindJsonText(o.get(names.getString(i)), keys);
-                        if (found.length() > 0) return found;
-                    }
-                }
-            } else if (node instanceof JSONArray) {
-                JSONArray a = (JSONArray) node;
-                for (int i = 0; i < a.length(); i++) {
-                    String found = accountFindJsonText(a.get(i), keys);
-                    if (found.length() > 0) return found;
-                }
-            }
-        } catch (Exception ignored) {}
-        return "";
-    }
-
-    private int parseAccountPercent(String s) {
-        if (s == null) return -1;
-        s = s.replace("%", "").trim();
-        try {
-            double d = Double.parseDouble(s);
-            if (d <= 1.0) d *= 100.0;
-            if (d < 0) return -1;
-            if (d > 100) d = 100;
-            return (int) Math.round(d);
-        } catch (Exception e) {
-            return -1;
-        }
-    }
-
-    private String accountEnc(String s) {
-        try {
-            if (s == null) s = "";
-            return URLEncoder.encode(s, "UTF-8");
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    private String emptyAccount(String s) {
-        if (s == null || s.trim().length() == 0 || "null".equalsIgnoreCase(s.trim())) return "0";
-        return s.trim();
-    }
-
-
-    private void showStorage() {
-        LinearLayout box = base("Storage");
-        TextView data = small("Loading...");
-        box.addView(card("Drive / Quota / Temperature", data));
-
-        Button refresh = button("Refresh", YELLOW, Color.BLACK);
-        refresh.setOnClickListener(v -> showStorage());
-        box.addView(refresh, lp());
-
-        setScreen(scroll(box));
-
-        getText("/api/dashboard", new TextCallback() {
-            public void ok(String text) { data.setText(pretty(text)); }
-            public void fail(String err) { data.setText("Storage API failed:\n" + err); }
-        });
-    }
-
-    
-    private void showAdmin() {
-        if (!prefs.getBoolean("admin_unlocked", false)) {
-            showAdminLock();
-            return;
-        }
-
-        LinearLayout box = baseNoTitle();
-        box.setPadding(dp(12), dp(12), dp(12), dp(30) + getSafeBottomPadding());
-
-        TextView heading = new TextView(this);
-        heading.setText("Admin Panel");
-        heading.setTextColor(YELLOW);
-        heading.setTextSize(26);
-        heading.setTypeface(Typeface.DEFAULT_BOLD);
-        heading.setPadding(0, 0, 0, dp(10));
-        box.addView(heading);
-
-        final LinearLayout metricsGrid = new LinearLayout(this);
-        metricsGrid.setOrientation(LinearLayout.VERTICAL);
-        box.addView(metricsGrid);
-
-        LinearLayout addUser = new LinearLayout(this);
-        addUser.setOrientation(LinearLayout.VERTICAL);
-        addUser.setPadding(dp(14), dp(14), dp(14), dp(14));
-        addUser.setBackground(round(Color.rgb(33, 12, 10), dp(16), Color.rgb(150, 90, 0), 1));
-
-        TextView addTitle = new TextView(this);
-        addTitle.setText("Add New User");
-        addTitle.setTextColor(YELLOW);
-        addTitle.setTextSize(23);
-        addTitle.setTypeface(Typeface.DEFAULT_BOLD);
-
-        TextView addSub = small("Creates user, sets temporary password, sets allowed storage, and chooses which drive stores the user files.");
-
-        final EditText newEmail = adminInput("user@example.com");
-        final EditText newPass = adminInput("Temporary password");
-        final EditText newStorage = adminInput("Allowed storage, example: 10GB");
-        final EditText newDrive = adminInput("Drive name, example: hdd 512 gb");
-        final EditText newRole = adminInput("Role, example: User");
-
-        Button create = button("Create User", YELLOW, Color.BLACK);
-        create.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                adminPost("/api/admin/add-user",
-                        "email=" + enc(newEmail.getText().toString()) +
-                        "&password=" + enc(newPass.getText().toString()) +
-                        "&storage=" + enc(newStorage.getText().toString()) +
-                        "&drive=" + enc(newDrive.getText().toString()) +
-                        "&role=" + enc(newRole.getText().toString()),
-                        new TextCallback() {
-                            @Override public void ok(String text) {
-                                toast("User created");
-                                showAdmin();
-                            }
-
-                            @Override public void fail(String err) {
-                                toast("Add user failed: " + err);
-                            }
-                        });
-            }
-        });
-
-        addUser.addView(addTitle);
-        addUser.addView(addSub);
-        addUser.addView(newEmail, inputLp());
-        addUser.addView(newPass, inputLp());
-        addUser.addView(newStorage, inputLp());
-        addUser.addView(newDrive, inputLp());
-        addUser.addView(newRole, inputLp());
-        addUser.addView(create, lp());
-
-        box.addView(addUser, lp());
-
-        TextView usersTitle = new TextView(this);
-        usersTitle.setText("Users");
-        usersTitle.setTextColor(YELLOW);
-        usersTitle.setTextSize(23);
-        usersTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        usersTitle.setPadding(0, dp(12), 0, dp(6));
-        box.addView(usersTitle);
-
-        final LinearLayout usersBox = new LinearLayout(this);
-        usersBox.setOrientation(LinearLayout.VERTICAL);
-        box.addView(usersBox);
-
-        TextView drivesTitle = new TextView(this);
-        drivesTitle.setText("Physical Drives");
-        drivesTitle.setTextColor(YELLOW);
-        drivesTitle.setTextSize(23);
-        drivesTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        drivesTitle.setPadding(0, dp(12), 0, dp(6));
-        box.addView(drivesTitle);
-
-        final LinearLayout drivesBox = new LinearLayout(this);
-        drivesBox.setOrientation(LinearLayout.VERTICAL);
-        box.addView(drivesBox);
-
-        Button refresh = button("Refresh Admin Data", YELLOW, Color.BLACK);
-        refresh.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                loadAdminData(metricsGrid, usersBox, drivesBox);
-            }
-        });
-        box.addView(refresh, lp());
-
-        Button lock = button("Lock Admin Panel", RED, Color.WHITE);
-        lock.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                prefs.edit().putBoolean("admin_unlocked", false).apply();
-                showAdminLock();
-            }
-        });
-        box.addView(lock, lp());
-
-        setScreen(scroll(box));
-        loadAdminData(metricsGrid, usersBox, drivesBox);
-    }
-
-
-
-    private void showAdminLock() {
-        topBar.setVisibility(View.VISIBLE);
-        bottomNav.setVisibility(View.VISIBLE);
-
-        LinearLayout box = baseNoTitle();
-        box.setGravity(Gravity.CENTER_HORIZONTAL);
-        box.setPadding(dp(22), dp(40), dp(22), dp(40) + getSafeBottomPadding());
-
-        TextView icon = new TextView(this);
-        icon.setText("🔒");
-        icon.setTextSize(56);
-        icon.setGravity(Gravity.CENTER);
-        box.addView(icon);
-
-        TextView title = new TextView(this);
-        title.setText("Admin Locked");
-        title.setTextColor(YELLOW);
-        title.setTextSize(28);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setGravity(Gravity.CENTER);
-        box.addView(title);
-
-        TextView sub = small("Enter admin code to unlock protected server controls.");
-        sub.setGravity(Gravity.CENTER);
-        box.addView(sub, lp());
-
-        final EditText code = adminInput("Admin code");
-        code.setInputType(0x00000012);
-        box.addView(code, inputLp());
-
-        Button unlock = button("Unlock Admin", YELLOW, Color.BLACK);
-        unlock.setTextSize(15);
-        unlock.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                if (ADMIN_CODE.equals(code.getText().toString().trim())) {
-                    prefs.edit().putBoolean("admin_unlocked", true).apply();
-                    toast("Admin unlocked");
-                    showAdmin();
-                } else {
-                    toast("Wrong admin code");
-                }
-            }
-        });
-        box.addView(unlock, bigLp());
-
-        Button back = button("Back", CARD2, TEXT);
-        back.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                showHome();
-            }
-        });
-        box.addView(back, bigLp());
-
-        setScreen(scroll(box));
-    }
-
-    private void loadAdminData(final LinearLayout metricsGrid, final LinearLayout usersBox, final LinearLayout drivesBox) {
-        metricsGrid.removeAllViews();
-        usersBox.removeAllViews();
-        drivesBox.removeAllViews();
-
-        metricsGrid.addView(card("Loading", small("Fetching admin data...")));
-        usersBox.addView(card("Loading", small("Fetching users...")));
-        drivesBox.addView(card("Loading", small("Fetching drives...")));
-
-        getText("/api/admin/dashboard", new TextCallback() {
-            @Override public void ok(String text) {
-                metricsGrid.removeAllViews();
-                renderAdminMetrics(metricsGrid, text);
-            }
-
-            @Override public void fail(String err) {
-                getText("/api/dashboard", new TextCallback() {
-                    @Override public void ok(String text) {
-                        metricsGrid.removeAllViews();
-                        renderAdminMetrics(metricsGrid, text);
-                    }
-
-                    @Override public void fail(String e2) {
-                        metricsGrid.removeAllViews();
-                        metricsGrid.addView(card("Admin Dashboard Failed", small(err + "\n" + e2)));
-                    }
-                });
-            }
-        });
-
-        getText("/api/admin/users", new TextCallback() {
-            @Override public void ok(String text) {
-                usersBox.removeAllViews();
-                renderAdminUsers(usersBox, text);
-            }
-
-            @Override public void fail(String err) {
-                getText("/api/users", new TextCallback() {
-                    @Override public void ok(String text) {
-                        usersBox.removeAllViews();
-                        renderAdminUsers(usersBox, text);
-                    }
-
-                    @Override public void fail(String e2) {
-                        usersBox.removeAllViews();
-                        usersBox.addView(card("Users Failed", small(err + "\n" + e2)));
-                    }
-                });
-            }
-        });
-
-        getText("/api/admin/drives", new TextCallback() {
-            @Override public void ok(String text) {
-                drivesBox.removeAllViews();
-                renderAdminDrives(drivesBox, text);
-            }
-
-            @Override public void fail(String err) {
-                getText("/api/drives", new TextCallback() {
-                    @Override public void ok(String text) {
-                        drivesBox.removeAllViews();
-                        renderAdminDrives(drivesBox, text);
-                    }
-
-                    @Override public void fail(String e2) {
-                        drivesBox.removeAllViews();
-                        drivesBox.addView(card("Physical Drives Failed", small(err + "\n" + e2)));
-                    }
-                });
-            }
-        });
-    }
-
-    private void renderAdminMetrics(LinearLayout parent, String text) {
-        try {
-            JSONObject obj = new JSONObject(text);
-
-            String totalUsers = findJsonText(obj, new String[]{"totalUsers", "usersCount", "userCount"});
-            String realUsed = findJsonText(obj, new String[]{"realUserUsed", "realUsed", "actualUsed", "usedByUsers"});
-            String totalGiven = findJsonText(obj, new String[]{"totalStorageGiven", "storageGiven", "quotaGiven"});
-            String realFiles = findJsonText(obj, new String[]{"realFiles", "totalFiles", "files"});
-            String driveCount = findJsonText(obj, new String[]{"driveCount", "drivesCount", "totalDrives"});
-            String givenNotUsed = findJsonText(obj, new String[]{"storageGivenNotUsed", "givenNotUsed", "unusedGiven"});
-
-            LinearLayout r1 = new LinearLayout(this);
-            r1.setOrientation(LinearLayout.HORIZONTAL);
-            r1.addView(adminMetric("Total Users", emptyDash(totalUsers)), new LinearLayout.LayoutParams(0, dp(84), 1));
-            r1.addView(adminMetric("Real User Used", emptyDash(realUsed)), new LinearLayout.LayoutParams(0, dp(84), 1));
-
-            LinearLayout r2 = new LinearLayout(this);
-            r2.setOrientation(LinearLayout.HORIZONTAL);
-            r2.addView(adminMetric("Total Storage Given", emptyDash(totalGiven)), new LinearLayout.LayoutParams(0, dp(84), 1));
-            r2.addView(adminMetric("Real Files", emptyDash(realFiles)), new LinearLayout.LayoutParams(0, dp(84), 1));
-
-            LinearLayout r3 = new LinearLayout(this);
-            r3.setOrientation(LinearLayout.HORIZONTAL);
-            r3.addView(adminMetric("Drive Count", emptyDash(driveCount)), new LinearLayout.LayoutParams(0, dp(84), 1));
-            r3.addView(adminMetric("Storage Given Not Used", emptyDash(givenNotUsed)), new LinearLayout.LayoutParams(0, dp(84), 1));
-
-            parent.addView(r1, lp());
-            parent.addView(r2, lp());
-            parent.addView(r3, lp());
-        } catch (Exception e) {
-            parent.addView(card("Raw Dashboard", small(pretty(text))));
-        }
-    }
-
-    private View adminMetric(String label, String value) {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(dp(14), dp(10), dp(14), dp(10));
-        c.setBackground(round(Color.rgb(34, 12, 10), dp(16), Color.rgb(150, 90, 0), 1));
-
-        TextView l = new TextView(this);
-        l.setText(label);
-        l.setTextColor(YELLOW);
-        l.setTextSize(11);
-
-        TextView v = new TextView(this);
-        v.setText(value);
-        v.setTextColor(YELLOW);
-        v.setTextSize(22);
-        v.setTypeface(Typeface.DEFAULT_BOLD);
-
-        c.addView(l);
-        c.addView(v);
-        return c;
-    }
-
-    private void renderAdminUsers(LinearLayout parent, String text) {
-        try {
-            JSONArray arr = extractArray(text, new String[]{"users", "data", "items"});
-            if (arr == null) {
-                parent.addView(card("Users", small(pretty(text))));
-                return;
-            }
-
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject u = arr.getJSONObject(i);
-
-                String email = first(u, "email", "username", "id", "name");
-                String role = first(u, "role", "type");
-                String status = first(u, "status", "active", "blocked");
-                String drive = first(u, "drive", "driveName", "storageDrive");
-                String actual = first(u, "actual", "actualPath", "path");
-                String quota = first(u, "storage", "quota", "allowedStorage");
-                String used = first(u, "used", "usedStorage", "realUsed");
-                String files = first(u, "files", "fileCount", "totalFiles");
-                String photos = first(u, "photos", "photoCount");
-                String videos = first(u, "videos", "videoCount");
-
-                parent.addView(userAdminCard(email, role, status, drive, actual, quota, used, files, photos, videos));
-            }
-        } catch (Exception e) {
-            parent.addView(card("Users", small(pretty(text))));
-        }
-    }
-
-    private View userAdminCard(final String email, String role, String status, String drive, String actual, String quota, String used, String files, String photos, String videos) {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(dp(12), dp(12), dp(12), dp(12));
-        c.setBackground(round(Color.rgb(20, 8, 7), dp(16), Color.rgb(70, 35, 20), 1));
-
-        TextView top = new TextView(this);
-        top.setText(emptyDash(email));
-        top.setTextColor(TEXT);
-        top.setTextSize(15);
-        top.setTypeface(Typeface.DEFAULT_BOLD);
-
-        TextView details = small(
-                "Role: " + emptyDash(role) +
-                "\nStatus: " + emptyDash(status) +
-                "\nStorage Drive: " + emptyDash(drive) +
-                "\nActual: " + emptyDash(actual) +
-                "\nStorage: " + emptyDash(used) + " / " + emptyDash(quota) +
-                "\nFiles: " + emptyDash(files) + "    Photos: " + emptyDash(photos) + "    Videos: " + emptyDash(videos)
-        );
-
-        final EditText moveDrive = adminInput("Drive name");
-        Button move = button("Move User To Drive", YELLOW, Color.BLACK);
-        move.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                adminPost("/api/admin/move-user-drive",
-                        "email=" + enc(email) + "&drive=" + enc(moveDrive.getText().toString()),
-                        adminToastReload("User moved"));
-            }
-        });
-
-        final EditText storage = adminInput("Storage, example: 10GB");
-        Button changeStorage = button("Change Storage", YELLOW, Color.BLACK);
-        changeStorage.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                adminPost("/api/admin/change-storage",
-                        "email=" + enc(email) + "&storage=" + enc(storage.getText().toString()),
-                        adminToastReload("Storage changed"));
-            }
-        });
-
-        final EditText pass = adminInput("New password");
-        Button reset = button("Reset Password", YELLOW, Color.BLACK);
-        reset.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                adminPost("/api/admin/reset-password",
-                        "email=" + enc(email) + "&password=" + enc(pass.getText().toString()),
-                        adminToastReload("Password reset"));
-            }
-        });
-
-        Button block = button("Block", RED, Color.WHITE);
-        block.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                adminPost("/api/admin/block-user", "email=" + enc(email), adminToastReload("User blocked"));
-            }
-        });
-
-        Button unblock = button("Unblock", CARD2, TEXT);
-        unblock.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                adminPost("/api/admin/unblock-user", "email=" + enc(email), adminToastReload("User unblocked"));
-            }
-        });
-
-        final EditText del = adminInput("Type DELETE");
-        Button delete = button("Delete User + Files", RED, Color.WHITE);
-        delete.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                if (!"DELETE".equals(del.getText().toString().trim())) {
-                    toast("Type DELETE first");
-                    return;
-                }
-                adminPost("/api/admin/delete-user",
-                        "email=" + enc(email) + "&confirm=DELETE",
-                        adminToastReload("User deleted"));
-            }
-        });
-
-        c.addView(top);
-        c.addView(details);
-        c.addView(moveDrive, inputLp());
-        c.addView(move, lp());
-        c.addView(storage, inputLp());
-        c.addView(changeStorage, lp());
-        c.addView(pass, inputLp());
-        c.addView(reset, lp());
-        c.addView(block, lp());
-        c.addView(unblock, lp());
-        c.addView(del, inputLp());
-        c.addView(delete, lp());
-
-        LinearLayout.LayoutParams lp = lp();
-        c.setLayoutParams(lp);
-        return c;
-    }
-
-    private void renderAdminDrives(LinearLayout parent, String text) {
-        try {
-            JSONArray arr = extractArray(text, new String[]{"drives", "data", "items"});
-            if (arr == null) {
-                parent.addView(card("Physical Drives", small(pretty(text))));
-                return;
-            }
-
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject d = arr.getJSONObject(i);
-
-                String name = first(d, "name", "driveName", "label");
-                String system = first(d, "system", "device", "path");
-                String userRoot = first(d, "userRoot", "usersRoot", "mount", "mountPoint");
-                String size = first(d, "size", "total", "totalSize");
-                String model = first(d, "model");
-                String temp = first(d, "temperature", "temp");
-                String status = first(d, "status", "health");
-                String used = first(d, "used", "driveUsed");
-                String free = first(d, "free", "driveFree");
-                String given = first(d, "storageGiven", "given");
-                String notUsed = first(d, "storageGivenNotUsed", "notUsed");
-
-                parent.addView(driveAdminCard(name, system, userRoot, size, model, temp, status, used, free, given, notUsed));
-            }
-        } catch (Exception e) {
-            parent.addView(card("Physical Drives", small(pretty(text))));
-        }
-    }
-
-    private View driveAdminCard(final String name, String system, String userRoot, String size, String model, String temp, String status, String used, String free, String given, String notUsed) {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(dp(12), dp(12), dp(12), dp(12));
-        c.setBackground(round(Color.rgb(20, 8, 7), dp(16), Color.rgb(70, 35, 20), 1));
-
-        TextView title = new TextView(this);
-        title.setText(emptyDash(name));
-        title.setTextColor(TEXT);
-        title.setTextSize(16);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-
-        TextView details = small(
-                "System: " + emptyDash(system) +
-                "\nUser root: " + emptyDash(userRoot) +
-                "\nSize: " + emptyDash(size) +
-                "\nModel: " + emptyDash(model) +
-                "\nTemperature: " + emptyDash(temp) +
-                "\nStatus: " + emptyDash(status) +
-                "\nDrive Used / Total: " + emptyDash(used) +
-                "\nDrive Free: " + emptyDash(free) +
-                "\nStorage Given: " + emptyDash(given) +
-                "\nStorage Given Not Used: " + emptyDash(notUsed)
-        );
-
-        final EditText newName = adminInput("New drive name");
-        Button change = button("Change Name", YELLOW, Color.BLACK);
-        change.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                adminPost("/api/admin/change-drive-name",
-                        "oldName=" + enc(name) + "&newName=" + enc(newName.getText().toString()),
-                        adminToastReload("Drive name changed"));
-            }
-        });
-
-        c.addView(title);
-        c.addView(details);
-        c.addView(newName, inputLp());
-        c.addView(change, lp());
-
-        return c;
-    }
-
-    private JSONArray extractArray(String text, String[] keys) {
-        try {
-            String t = text.trim();
-            if (t.startsWith("[")) return new JSONArray(t);
-
-            JSONObject obj = new JSONObject(t);
-            for (String k : keys) {
-                if (obj.has(k) && obj.get(k) instanceof JSONArray) return obj.getJSONArray(k);
-            }
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    private EditText adminInput(String hint) {
-        EditText e = new EditText(this);
-        e.setSingleLine(true);
-        e.setHint(hint);
-        e.setTextColor(TEXT);
-        e.setHintTextColor(MUTED);
-        e.setPadding(dp(12), 0, dp(12), 0);
-        e.setBackground(round(Color.rgb(8, 8, 8), dp(12), Color.rgb(150, 90, 0), 1));
-        return e;
-    }
-
-    private LinearLayout.LayoutParams inputLp() {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(46));
-        lp.setMargins(0, dp(6), 0, dp(6));
-        return lp;
-    }
-
-    private TextCallback adminToastReload(final String okMessage) {
-        return new TextCallback() {
-            @Override public void ok(String text) {
-                toast(okMessage);
-                showAdmin();
-            }
-
-            @Override public void fail(String err) {
-                toast("Admin action failed: " + err);
-            }
-        };
-    }
-
-    private void adminPost(final String endpoint, final String body, final TextCallback cb) {
-        io.execute(new Runnable() {
-            @Override public void run() {
-                try {
-                    HttpURLConnection c = (HttpURLConnection) new URL(abs(endpoint)).openConnection();
-                    applySavedCookie(c);
-                    c.setConnectTimeout(12000);
-                    c.setReadTimeout(20000);
-                    c.setDoInput(true);
-                    c.setDoOutput(true);
-                    c.setUseCaches(false);
-                    c.setRequestMethod("POST");
-                    c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-                    DataOutputStream out = new DataOutputStream(c.getOutputStream());
-                    out.writeBytes(body);
-                    out.flush();
-                    out.close();
-
-                    int code = c.getResponseCode();
-                    saveCookieFromResponse(c);
-                    final String response = read(code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream());
-
-                    if (code >= 200 && code < 300) {
-                        ui.post(new Runnable() {
-                            @Override public void run() { cb.ok(response); }
-                        });
-                    } else {
-                        ui.post(new Runnable() {
-                            @Override public void run() { cb.fail(response); }
-                        });
-                    }
-                } catch (final Exception e) {
-                    ui.post(new Runnable() {
-                        @Override public void run() { cb.fail(e.getMessage()); }
-                    });
-                }
-            }
-        });
-    }
-
-    private String enc(String s) {
-        try {
-            if (s == null) s = "";
-            return URLEncoder.encode(s, "UTF-8");
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    private String emptyDash(String s) {
-        if (s == null || s.trim().length() == 0 || "null".equalsIgnoreCase(s.trim())) return "—";
-        return s.trim();
-    }
-
-
-
-    private void showAccount() {
-        topBar.setVisibility(View.VISIBLE);
-        bottomNav.setVisibility(View.VISIBLE);
-
-        LinearLayout box = baseNoTitle();
-        box.setPadding(dp(12), dp(10), dp(12), dp(34) + getSafeBottomPadding());
-
-        LinearLayout tabs = new LinearLayout(this);
-        tabs.setOrientation(LinearLayout.HORIZONTAL);
-
-        Button dash = button("Dashboard", CARD2, TEXT);
-        dash.setTextSize(15);
-        dash.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showHome(); }
-        });
-
-        Button gal = button("Gallery", CARD2, TEXT);
-        gal.setTextSize(15);
-        gal.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showGallery(); }
-        });
-
-        Button upload = button("Upload", CARD2, TEXT);
-        upload.setTextSize(15);
-        upload.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showBackup(); }
-        });
-
-        tabs.addView(dash, new LinearLayout.LayoutParams(0, dp(48), 1));
-        TextView gapA = new TextView(this);
-        tabs.addView(gapA, new LinearLayout.LayoutParams(dp(10), 1));
-        tabs.addView(gal, new LinearLayout.LayoutParams(0, dp(48), 1));
-        TextView gapB = new TextView(this);
-        tabs.addView(gapB, new LinearLayout.LayoutParams(dp(10), 1));
-        tabs.addView(upload, new LinearLayout.LayoutParams(0, dp(48), 1));
-        box.addView(tabs, lp());
-
-        LinearLayout stats = new LinearLayout(this);
-        stats.setOrientation(LinearLayout.HORIZONTAL);
-
-        final TextView storageUsed = accountBigValue("—");
-        final TextView files = accountBigValue("—");
-        final TextView pv = accountBigValue("—");
-
-        stats.addView(accountStatCard(storageUsed, "Storage Used"), new LinearLayout.LayoutParams(0, dp(92), 1));
-        TextView g1 = new TextView(this);
-        stats.addView(g1, new LinearLayout.LayoutParams(dp(10), 1));
-        stats.addView(accountStatCard(files, "Files"), new LinearLayout.LayoutParams(0, dp(92), 1));
-        TextView g2 = new TextView(this);
-        stats.addView(g2, new LinearLayout.LayoutParams(dp(10), 1));
-        stats.addView(accountStatCard(pv, "Photos / Videos"), new LinearLayout.LayoutParams(0, dp(92), 1));
-
-        box.addView(stats, lp());
-
-        LinearLayout zip = accountPanel();
-        TextView zipTitle = accountTitle("ZIP Backup");
-        TextView zipInfo = small("Server creates ZIP in temp storage. It stays available for 18 hours from request time. If laptop/server closes while ZIP is still building, building stops. If ZIP was already ready, download remains after reconnect until expiry.");
-        final ProgressBar zipProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        zipProgress.setMax(100);
-        zipProgress.setProgress(0);
-
-        final TextView zipStatus = small("No ZIP requested yet.");
-
-        Button createZip = button("Create ZIP Backup", Color.rgb(46, 204, 113), Color.BLACK);
-        createZip.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                createZipBackup(zipStatus, zipProgress);
-            }
-        });
-
-        zip.addView(zipTitle);
-        zip.addView(zipInfo, lp());
-        zip.addView(zipProgress, lp());
-        zip.addView(zipStatus, lp());
-        zip.addView(createZip, bigLp());
-        box.addView(zip, lp());
-
-        Button downloadOneByOne = button("Download Files One By One", CARD2, TEXT);
-        downloadOneByOne.setTextSize(15);
-        downloadOneByOne.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                downloadFilesOneByOne();
-            }
-        });
-        box.addView(downloadOneByOne, bigLp());
-
-        LinearLayout security = accountPanel();
-        TextView secTitle = accountTitle("Security");
-
-        final EditText oldPass = accountInput("Current password");
-        oldPass.setInputType(0x00000081);
-
-        final EditText newPass = accountInput("New password");
-        newPass.setInputType(0x00000081);
-
-        Button changePass = button("Change Password", Color.rgb(46, 204, 113), Color.BLACK);
-        changePass.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                changeAccountPassword(oldPass.getText().toString(), newPass.getText().toString());
-            }
-        });
-
-        security.addView(secTitle);
-        security.addView(oldPass, inputLp());
-        security.addView(newPass, inputLp());
-        security.addView(changePass, bigLp());
-        box.addView(security, lp());
-
-        LinearLayout danger = new LinearLayout(this);
-        danger.setOrientation(LinearLayout.VERTICAL);
-        danger.setPadding(dp(16), dp(16), dp(16), dp(16));
-        danger.setBackground(round(Color.rgb(16, 4, 4), dp(16), RED, 1));
-
-        TextView dangerTitle = accountTitle("Danger Zone");
-        dangerTitle.setTextColor(Color.rgb(255, 95, 95));
-
-        TextView dangerText = small("This deletes all your uploaded photos, videos, documents, music and files. Account remains, data goes away. Type DELETE.");
-
-        final EditText confirm = accountInput("Type DELETE");
-        Button delete = button("Delete All My Data", Color.rgb(220, 38, 38), Color.WHITE);
-        delete.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                if (!"DELETE".equals(confirm.getText().toString().trim())) {
-                    toast("Type DELETE first");
-                    return;
-                }
-                deleteAllMyData();
-            }
-        });
-
-        danger.addView(dangerTitle);
-        danger.addView(dangerText, lp());
-        danger.addView(confirm, inputLp());
-        danger.addView(delete, bigLp());
-        box.addView(danger, lp());
-
-        setScreen(scroll(box));
-
-        loadAccountStats(storageUsed, files, pv);
-        loadZipStatus(zipStatus, zipProgress);
-    }
-
-
-    private void showSettings() {
-        LinearLayout box = base("Settings");
-
-        EditText input = new EditText(this);
-        input.setText(baseUrl == null ? "" : baseUrl);
-        input.setSingleLine(true);
-        input.setTextColor(TEXT);
-        input.setHintTextColor(MUTED);
-        input.setHint("http://192.168.1.15:3000");
-        input.setPadding(dp(14), 0, dp(14), 0);
-        input.setBackground(round(CARD2, dp(18), YELLOW, 1));
-
-        box.addView(small("Server URL"));
-        box.addView(input, new LinearLayout.LayoutParams(-1, dp(54)));
-
-        Button save = button("Save", YELLOW, Color.BLACK);
-        save.setOnClickListener(v -> {
-            String u = input.getText().toString().trim();
-            if (u.endsWith("/")) u = u.substring(0, u.length() - 1);
-            if (!u.startsWith("http")) {
-                toast("Use full URL like http://192.168.1.15:3000");
-                return;
-            }
-            baseUrl = u;
-            prefs.edit().putString(KEY_BASE_URL, baseUrl).apply();
-            toast("Saved");
-            showHome();
-        });
-        box.addView(save, lp());
-
-        Button setup = button("Reconnect Setup", RED, Color.WHITE);
-        setup.setOnClickListener(v -> showSetupDialog());
-        box.addView(setup, lp());
-
-        box.addView(card("App Info", small("Native UI enabled\nWebView removed\nBackend: " + baseUrl)));
-
-        setScreen(scroll(box));
-    }
-
-    private void getText(String endpoint, TextCallback cb) {
-        io.execute(() -> {
-            try {
-                HttpURLConnection c = (HttpURLConnection) new URL(abs(endpoint)).openConnection();
-                c.setConnectTimeout(9000);
-                c.setReadTimeout(15000);
-                c.setRequestMethod("GET");
-                int code = c.getResponseCode();
-                InputStream is = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
-                String body = read(is);
-                if (code >= 200 && code < 300) ui.post(() -> cb.ok(body));
-                else ui.post(() -> cb.fail("HTTP " + code + "\n" + body));
-            } catch (Exception e) {
-                ui.post(() -> cb.fail(e.getMessage()));
-            }
-        });
-    }
-
-    private void postMultipartSync(String endpoint, Uri fileUri, String fileName) throws Exception {
-        String boundary = "FCBoundary" + System.currentTimeMillis();
-        HttpURLConnection c = (HttpURLConnection) new URL(abs(endpoint)).openConnection();
-        c.setConnectTimeout(15000);
-        c.setReadTimeout(60000);
-        c.setDoInput(true);
-        c.setDoOutput(true);
-        c.setUseCaches(false);
-        c.setRequestMethod("POST");
-        c.setRequestProperty("Connection", "Keep-Alive");
-        c.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-        applySavedCookie(c);
-
-        String mime = getContentResolver().getType(fileUri);
-        if (mime == null) mime = guessMime(fileName);
-
-        DataOutputStream out = new DataOutputStream(c.getOutputStream());
-        out.writeBytes("--" + boundary + "\r\n");
-        out.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"" + clean(fileName) + "\"\r\n");
-        out.writeBytes("Content-Type: " + mime + "\r\n\r\n");
-
-        InputStream in = getContentResolver().openInputStream(fileUri);
-        if (in == null) throw new Exception("Cannot open file");
-
-        byte[] buf = new byte[65536];
-        int n;
-        while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-        in.close();
-
-        out.writeBytes("\r\n--" + boundary + "--\r\n");
-        out.flush();
-        out.close();
-
-        int code = c.getResponseCode();
-        saveCookieFromResponse(c);
-        String body = read(code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream());
-
-        if (code < 200 || code >= 300) throw new Exception("HTTP " + code + ": " + body);
-    }
-
-    private ArrayList<FileItem> parseFiles(String text) {
-        ArrayList<FileItem> out = new ArrayList<>();
-        try {
-            JSONArray arr = null;
-            String s = text.trim();
-
-            if (s.startsWith("[")) {
-                arr = new JSONArray(s);
-            } else {
-                JSONObject obj = new JSONObject(s);
-                for (String k : new String[]{"files", "items", "data", "images", "media"}) {
-                    if (obj.has(k) && obj.get(k) instanceof JSONArray) {
-                        arr = obj.getJSONArray(k);
-                        break;
-                    }
-                }
-            }
-
-            if (arr == null) return out;
-
-            for (int i = 0; i < arr.length(); i++) {
-                Object raw = arr.get(i);
-                FileItem it = new FileItem();
-
-                if (raw instanceof JSONObject) {
-                    JSONObject o = (JSONObject) raw;
-                    it.name = first(o, "name", "filename", "fileName", "originalname", "title");
-                    it.url = first(o, "url", "downloadUrl", "download", "path", "src", "href");
-                    it.mime = first(o, "mime", "mimeType", "type", "contentType");
-                    it.size = o.optLong("size", o.optLong("bytes", 0));
-                } else {
-                    it.url = String.valueOf(raw);
-                    it.name = lastPart(it.url);
-                }
-
-                if (it.name == null || it.name.isEmpty()) it.name = lastPart(it.url);
-                if (it.name == null || it.name.isEmpty()) it.name = "file-" + (i + 1);
-                it.url = abs(it.url);
-                out.add(it);
-            }
-        } catch (Exception ignored) {}
-        return out;
-    }
-
-    private void loadBitmap(String url, ImageView target) {
-        target.setTag(url);
-        io.execute(() -> {
-            try {
-                HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-                c.setConnectTimeout(10000);
-                c.setReadTimeout(20000);
-                InputStream in = new BufferedInputStream(c.getInputStream());
-                Bitmap b = BitmapFactory.decodeStream(in);
-                in.close();
-                ui.post(() -> {
-                    if (url.equals(target.getTag())) target.setImageBitmap(b);
-                });
-            } catch (Exception e) {
-                ui.post(() -> target.setImageResource(android.R.drawable.ic_menu_report_image));
-            }
-        });
-    }
-
-    private void openExternal(FileItem item) {
-        try {
-            Intent i = new Intent(Intent.ACTION_VIEW);
-            i.setDataAndType(Uri.parse(item.url), item.mime == null || item.mime.isEmpty() ? "*/*" : item.mime);
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(i);
-        } catch (Exception e) {
-            toast("No app can open this file");
-        }
-    }
-
-    private void download(FileItem item) {
-        try {
-            DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-            DownloadManager.Request r = new DownloadManager.Request(Uri.parse(item.url));
-            r.setTitle(item.name);
-            r.setDescription("Downloading from Family Cloud");
-            r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            r.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, item.name);
-            dm.enqueue(r);
-            toast("Download started");
-        } catch (Exception e) {
-            toast("Download failed: " + e.getMessage());
-        }
-    }
-
-    private class GalleryAdapter extends BaseAdapter {
-        Context ctx;
-        ArrayList<FileItem> items;
-
-        GalleryAdapter(Context c, ArrayList<FileItem> i) {
-            ctx = c;
-            items = i;
-        }
-
-        public int getCount() { return items.size(); }
-        public Object getItem(int i) { return items.get(i); }
-        public long getItemId(int i) { return i; }
-
-        public View getView(int pos, View old, ViewGroup parent) {
-            LinearLayout cell = new LinearLayout(ctx);
-            cell.setOrientation(LinearLayout.VERTICAL);
-            cell.setPadding(dp(3), dp(3), dp(3), dp(3));
-            cell.setBackground(round(CARD, dp(14), 0, 0));
-
-            ImageView img = new ImageView(ctx);
-            img.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            img.setBackgroundColor(Color.BLACK);
-
-            TextView name = new TextView(ctx);
-            name.setTextColor(TEXT);
-            name.setTextSize(10);
-            name.setSingleLine(true);
-            name.setPadding(dp(4), dp(4), dp(4), dp(4));
-
-            FileItem it = items.get(pos);
-            name.setText(it.name);
-
-            cell.addView(img, new LinearLayout.LayoutParams(-1, dp(118)));
-            cell.addView(name, new LinearLayout.LayoutParams(-1, dp(28)));
-
-            if (it.isImage()) loadBitmap(it.url, img);
-            else {
-                img.setImageResource(it.isVideo() ? android.R.drawable.ic_media_play : android.R.drawable.ic_menu_save);
-                img.setPadding(dp(34), dp(34), dp(34), dp(34));
-            }
-
-            return cell;
-        }
-    }
-
-    private static class FileItem {
-        String name = "";
-        String url = "";
-        String mime = "";
-        long size = 0;
-
-        boolean isImage() {
-            String x = (mime + " " + name + " " + url).toLowerCase(Locale.ROOT);
-            return x.contains("image") || x.endsWith(".jpg") || x.endsWith(".jpeg") || x.endsWith(".png") || x.endsWith(".webp") || x.endsWith(".gif");
-        }
-
-        boolean isVideo() {
-            String x = (mime + " " + name + " " + url).toLowerCase(Locale.ROOT);
-            return x.contains("video") || x.endsWith(".mp4") || x.endsWith(".mkv") || x.endsWith(".mov") || x.endsWith(".webm");
-        }
-
-        String sizeText() {
-            if (size <= 0) return "Unknown";
-            double v = size;
-            String[] u = {"B", "KB", "MB", "GB"};
-            int i = 0;
-            while (v >= 1024 && i < u.length - 1) {
-                v /= 1024;
-                i++;
-            }
-            return String.format(Locale.ROOT, "%.1f %s", v, u[i]);
-        }
-    }
-
-    private interface TextCallback {
-        void ok(String text);
-        void fail(String err);
-    }
-
-    private String abs(String s) {
-        if (s == null) return "";
-        s = s.trim();
-        if (s.startsWith("http://") || s.startsWith("https://")) return s;
-
-        String b = baseUrl == null ? "" : baseUrl.trim();
-        if (b.endsWith("/")) b = b.substring(0, b.length() - 1);
-
-        if (s.startsWith("/")) return b + s;
-        return b + "/" + s;
-    }
-
-    private String pretty(String text) {
-        try {
-            String s = text.trim();
-            if (s.startsWith("{")) return new JSONObject(s).toString(2);
-            if (s.startsWith("[")) return new JSONArray(s).toString(2);
-            return text;
-        } catch (Exception e) {
-            return text;
-        }
-    }
-
-    private String read(InputStream in) throws Exception {
-        if (in == null) return "";
-        BufferedReader br = new BufferedReader(new InputStreamReader(in));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = br.readLine()) != null) sb.append(line).append("\n");
-        br.close();
-        return sb.toString().trim();
-    }
-
-    private String first(JSONObject o, String... keys) {
-        for (String k : keys) {
-            String v = o.optString(k, "");
-            if (v != null && !v.trim().isEmpty() && !"null".equalsIgnoreCase(v)) return v.trim();
-        }
-        return "";
-    }
-
-    private String lastPart(String s) {
-        if (s == null) return "";
-        int q = s.indexOf("?");
-        if (q >= 0) s = s.substring(0, q);
-        int slash = s.lastIndexOf("/");
-        return slash >= 0 ? s.substring(slash + 1) : s;
-    }
-
-    private String getDisplayName(Uri uri) {
-        String r = null;
-        Cursor c = null;
-        try {
-            c = getContentResolver().query(uri, null, null, null, null);
-            if (c != null && c.moveToFirst()) {
-                int i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                if (i >= 0) r = c.getString(i);
-            }
-        } catch (Exception ignored) {
-        } finally {
-            if (c != null) c.close();
-        }
-        if (r == null) r = uri.getLastPathSegment();
-        if (r == null || r.isEmpty()) r = "upload-file";
-        return r;
-    }
-
-    private String guessMime(String f) {
-        String ext = "";
-        int dot = f.lastIndexOf(".");
-        if (dot >= 0) ext = f.substring(dot + 1).toLowerCase(Locale.ROOT);
-        String m = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
-        return m == null ? "application/octet-stream" : m;
-    }
-
-    private String clean(String s) {
-        return s == null ? "file" : s.replace("\"", "").replace("\n", "").replace("\r", "");
-    }
-
-    private String joinLines(ArrayList<String> x) {
-        StringBuilder sb = new StringBuilder();
-        for (String s : x) sb.append(s).append("\n");
-        return sb.toString();
-    }
-
-    private String formatMillis(long ms) {
-        long sec = Math.max(0, ms / 1000);
-        long min = sec / 60;
-        sec %= 60;
-        return min > 0 ? min + " min " + sec + " sec" : sec + " sec";
-    }
-
-    private TextView small(String s) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextColor(MUTED);
-        t.setTextSize(14);
-        t.setLineSpacing(2, 1.05f);
-        t.setTextIsSelectable(true);
-        return t;
-    }
-
-    private TextView title(String s) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextColor(TEXT);
-        t.setTextSize(17);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        return t;
-    }
-
-    private View card(String heading, View body) {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(dp(16), dp(14), dp(16), dp(14));
-        c.setBackground(round(CARD, dp(22), 0, 0));
-        c.addView(title(heading));
-        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2);
-        bp.setMargins(0, dp(8), 0, 0);
-        c.addView(body, bp);
-        c.setLayoutParams(lp());
-        return c;
-    }
-
-    private Button button(String text, int bg, int fg) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setTextColor(fg);
-        b.setTextSize(13);
-        b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setAllCaps(false);
-        b.setBackground(round(bg, dp(16), 0, 0));
-        return b;
-    }
-
-    private GradientDrawable round(int color, int radius, int stroke, int width) {
-        GradientDrawable g = new GradientDrawable();
-        g.setColor(color);
-        g.setCornerRadius(radius);
-        if (width > 0) g.setStroke(dp(width), stroke);
-        return g;
-    }
-
-    private LinearLayout.LayoutParams lp() {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, dp(8), 0, dp(8));
-        return lp;
+        io = Executors.newFixedThreadPool(4);
+        baseUrl = prefs.getString("baseUrl", DEFAULT_URL);
+        cookie = prefs.getString("cookie", "");
+        showModeScreen();
     }
 
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
 
-
-    private int getSafeBottomPadding() {
-        int id = getResources().getIdentifier("navigation_bar_height", "dimen", "android");
-        int nav = 0;
-        if (id > 0) nav = getResources().getDimensionPixelSize(id);
-        return Math.max(dp(18), nav / 2);
+    private TextView tv(String text, int size, int color, int style) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(size);
+        t.setTextColor(color);
+        t.setTypeface(null, style);
+        t.setPadding(dp(6), dp(4), dp(6), dp(4));
+        return t;
     }
 
+    private Button btn(String text, int bg) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setTextColor(bg == YELLOW || bg == GREEN ? Color.BLACK : Color.WHITE);
+        b.setTextSize(13);
+        b.setTypeface(null, 1);
+        b.setBackgroundColor(bg);
+        b.setAllCaps(false);
+        b.setPadding(dp(10), dp(8), dp(10), dp(8));
+        return b;
+    }
 
-    private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_LONG).show();
+    private EditText input(String hint, boolean pass) {
+        EditText e = new EditText(this);
+        e.setHint(hint);
+        e.setHintTextColor(Color.GRAY);
+        e.setTextColor(WHITE);
+        e.setSingleLine(true);
+        e.setPadding(dp(12), dp(10), dp(12), dp(10));
+        e.setBackgroundColor(Color.rgb(8, 0, 0));
+        if (pass) e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        return e;
+    }
+
+    private LinearLayout panel() {
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.VERTICAL);
+        l.setPadding(dp(14), dp(14), dp(14), dp(14));
+        l.setBackgroundColor(PANEL);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(8), 0, dp(8));
+        l.setLayoutParams(lp);
+        return l;
+    }
+
+    private void baseScreen(String title, boolean nav) {
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BG);
+        root.setPadding(dp(8), dp(8), dp(8), dp(88));
+        setContentView(root);
+
+        if (nav) addTopbar();
+
+        ScrollView sv = new ScrollView(this);
+        content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(8), dp(8), dp(8), dp(30));
+        sv.addView(content);
+        root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        TextView h = tv(title, 28, YELLOW, 1);
+        content.addView(h);
+    }
+
+    private void addTopbar() {
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(TOP);
+        bar.setPadding(dp(8), dp(8), dp(8), dp(8));
+        hsv.addView(bar);
+        root.addView(hsv, new LinearLayout.LayoutParams(-1, -2));
+
+        navButton(bar, "←\nBack", new View.OnClickListener() { public void onClick(View v) { onBackPressed(); }});
+        navButton(bar, "⌂\nHome", new View.OnClickListener() { public void onClick(View v) { showDashboard(); }});
+        navButton(bar, "▧\nGallery", new View.OnClickListener() { public void onClick(View v) { showGallery(); }});
+        navButton(bar, "☁\nUpload", new View.OnClickListener() { public void onClick(View v) { showUpload(); }});
+        navButton(bar, "♙\nAccount", new View.OnClickListener() { public void onClick(View v) { showAccount(); }});
+        navButton(bar, "♜\nAdmin", new View.OnClickListener() { public void onClick(View v) { showAdmin(); }});
+        navButton(bar, "⇥\nLogout", new View.OnClickListener() { public void onClick(View v) { logout(); }});
+    }
+
+    private void navButton(LinearLayout bar, String text, View.OnClickListener l) {
+        Button b = btn(text, TOP);
+        b.setTextColor(WHITE);
+        b.setOnClickListener(l);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(86), dp(62));
+        lp.setMargins(dp(4), 0, dp(4), 0);
+        bar.addView(b, lp);
+    }
+
+    private void toast(final String s) {
+        runOnUiThread(new Runnable() { public void run() { Toast.makeText(MainActivity.this, s, Toast.LENGTH_SHORT).show(); }});
+    }
+
+    private void runIo(final Job j) {
+        io.execute(new Runnable() {
+            public void run() {
+                try { j.run(); }
+                catch (final Exception e) {
+                    runOnUiThread(new Runnable() {
+                        public void run() { alert("Error", e.getMessage()); }
+                    });
+                }
+            }
+        });
+    }
+
+    interface Job { void run() throws Exception; }
+
+    private String url(String path) {
+        if (path.startsWith("http://") || path.startsWith("https://")) return path;
+        if (!path.startsWith("/")) path = "/" + path;
+        return baseUrl.replaceAll("/+$", "") + path;
+    }
+
+    private String readStream(InputStream is) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+        return bos.toString("UTF-8");
+    }
+
+    private String request(String method, String path, String body, String type) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url(path)).openConnection();
+        c.setRequestMethod(method);
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(60000);
+        c.setRequestProperty("Accept", "application/json,text/plain,*/*");
+        if (cookie != null && cookie.length() > 0) c.setRequestProperty("Cookie", cookie);
+
+        if (body != null) {
+            c.setDoOutput(true);
+            c.setRequestProperty("Content-Type", type);
+            OutputStream os = c.getOutputStream();
+            os.write(body.getBytes("UTF-8"));
+            os.close();
+        }
+
+        List<String> set = c.getHeaderFields().get("Set-Cookie");
+        if (set != null && !set.isEmpty()) {
+            StringBuilder sb = new StringBuilder(cookie == null ? "" : cookie);
+            for (String s : set) {
+                String one = s.split(";", 2)[0];
+                if (sb.indexOf(one.split("=")[0] + "=") < 0) {
+                    if (sb.length() > 0) sb.append("; ");
+                    sb.append(one);
+                }
+            }
+            cookie = sb.toString();
+            prefs.edit().putString("cookie", cookie).apply();
+        }
+
+        int code = c.getResponseCode();
+        String out = readStream(code >= 400 ? c.getErrorStream() : c.getInputStream());
+        if (code >= 400) throw new IOException("HTTP " + code + ": " + out);
+        return out;
+    }
+
+    private JSONObject getJson(String path) throws Exception {
+        return new JSONObject(request("GET", path, null, null));
+    }
+
+    private JSONObject postJson(String path, JSONObject obj) throws Exception {
+        return new JSONObject(request("POST", path, obj.toString(), "application/json"));
+    }
+
+    private String enc(String s) throws Exception {
+        return URLEncoder.encode(s == null ? "" : s, "UTF-8");
+    }
+
+    private String q(JSONObject o, String... keys) {
+        for (String k : keys) {
+            if (o.has(k) && !o.isNull(k)) return String.valueOf(o.opt(k));
+        }
+        return "";
+    }
+
+    private int qi(JSONObject o, String... keys) {
+        for (String k : keys) {
+            if (o.has(k)) return o.optInt(k, 0);
+        }
+        return 0;
+    }
+
+    private void alert(String title, String msg) {
+        new AlertDialog.Builder(this).setTitle(title).setMessage(msg == null ? "" : msg).setPositiveButton("OK", null).show();
+    }
+
+    private void showModeScreen() {
+        baseScreen("Family Cloud", false);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+        content.addView(tv("Choose how to open the native app.", 16, WHITE, 0));
+
+        Button online = btn("Online Native Mode", YELLOW);
+        Button offline = btn("Offline Mode", TOP);
+        Button edit = btn("Edit Saved Server URL", TOP);
+
+        content.addView(online, new LinearLayout.LayoutParams(-1, dp(58)));
+        content.addView(offline, new LinearLayout.LayoutParams(-1, dp(58)));
+        content.addView(edit, new LinearLayout.LayoutParams(-1, dp(58)));
+
+        content.addView(tv("Saved URL: " + baseUrl, 13, Color.LTGRAY, 0));
+
+        online.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { showUrlChoice(); }
+        });
+
+        offline.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                offlineMode = true;
+                showOffline();
+            }
+        });
+
+        edit.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { showEditUrl(); }
+        });
+    }
+
+    private void showUrlChoice() {
+        baseScreen("Online Native Mode", false);
+        content.addView(tv("Saved server:", 16, YELLOW, 1));
+        content.addView(tv(baseUrl, 14, WHITE, 0));
+
+        Button cont = btn("Continue With Saved URL", GREEN);
+        Button edit = btn("Edit Saved URL", YELLOW);
+        Button back = btn("Go Back", TOP);
+        content.addView(cont, new LinearLayout.LayoutParams(-1, dp(58)));
+        content.addView(edit, new LinearLayout.LayoutParams(-1, dp(58)));
+        content.addView(back, new LinearLayout.LayoutParams(-1, dp(58)));
+
+        cont.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                offlineMode = false;
+                checkSessionOrLogin();
+            }
+        });
+        edit.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showEditUrl(); }});
+        back.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showModeScreen(); }});
+    }
+
+    private void showEditUrl() {
+        baseScreen("Edit Server URL", false);
+        final EditText e = input("http://100.x.x.x:3000", false);
+        e.setText(baseUrl);
+        content.addView(e);
+        Button save = btn("Save URL", GREEN);
+        Button back = btn("Back", TOP);
+        content.addView(save);
+        content.addView(back);
+
+        save.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                String u = e.getText().toString().trim();
+                if (!u.startsWith("http://") && !u.startsWith("https://")) {
+                    alert("Wrong URL", "Use http://IP:3000");
+                    return;
+                }
+                baseUrl = u;
+                prefs.edit().putString("baseUrl", baseUrl).apply();
+                showUrlChoice();
+            }
+        });
+
+        back.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showModeScreen(); }});
+    }
+
+    private void checkSessionOrLogin() {
+        baseScreen("Checking Login", false);
+        content.addView(tv("Checking saved login session...", 16, WHITE, 0));
+        runIo(new Job() {
+            public void run() throws Exception {
+                try {
+                    JSONObject u = getJson("/api/current-user");
+                    String email = q(u, "email", "user", "username");
+                    if (email.contains("@")) {
+                        currentEmail = email;
+                        runOnUiThread(new Runnable() { public void run() { showDashboard(); }});
+                        return;
+                    }
+                } catch (Exception ignored) {}
+                runOnUiThread(new Runnable() { public void run() { showLogin(); }});
+            }
+        });
+    }
+
+    private void showLogin() {
+        baseScreen("Login", false);
+        final EditText email = input("Email", false);
+        final EditText pass = input("Password", true);
+        email.setText(prefs.getString("email", ""));
+        content.addView(email);
+        content.addView(pass);
+
+        Button login = btn("Login", GREEN);
+        Button urlBtn = btn("Change Server URL", TOP);
+        content.addView(login, new LinearLayout.LayoutParams(-1, dp(58)));
+        content.addView(urlBtn, new LinearLayout.LayoutParams(-1, dp(58)));
+
+        login.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                final String em = email.getText().toString().trim();
+                final String pw = pass.getText().toString();
+                if (!em.contains("@") || pw.length() < 1) {
+                    alert("Missing", "Enter email and password.");
+                    return;
+                }
+
+                runIo(new Job() {
+                    public void run() throws Exception {
+                        boolean ok = false;
+                        try {
+                            JSONObject body = new JSONObject();
+                            body.put("email", em);
+                            body.put("password", pw);
+                            postJson("/api/login", body);
+                            ok = true;
+                        } catch (Exception ignored) {}
+
+                        if (!ok) {
+                            String form = "email=" + enc(em) + "&password=" + enc(pw);
+                            request("POST", "/login", form, "application/x-www-form-urlencoded");
+                        }
+
+                        currentEmail = em;
+                        prefs.edit()
+                                .putString("email", em)
+                                .putString("baseUrl", baseUrl)
+                                .putString("cookie", cookie == null ? "" : cookie)
+                                .apply();
+
+                        runOnUiThread(new Runnable() { public void run() { showDashboard(); }});
+                    }
+                });
+            }
+        });
+
+        urlBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showEditUrl(); }});
+    }
+
+    private void logout() {
+        prefs.edit().remove("cookie").apply();
+        cookie = "";
+        currentEmail = "";
+        showModeScreen();
+    }
+
+    private void showOffline() {
+        baseScreen("Offline Mode", false);
+        content.addView(tv("Offline mode can show saved server URL and cached login only. Live gallery/upload/admin need server.", 15, WHITE, 0));
+        content.addView(tv("Saved URL: " + baseUrl, 14, YELLOW, 1));
+        Button back = btn("Back", TOP);
+        content.addView(back);
+        back.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showModeScreen(); }});
+    }
+
+    private void showDashboard() {
+        baseScreen("Dashboard", true);
+        content.addView(tv("Family Cloud storage, backup, gallery, and device health.", 15, WHITE, 0));
+
+        final TextView user = tv("Logged in as: loading...", 15, YELLOW, 1);
+        content.addView(user, panelLp());
+
+        final TextView storage = tv("Storage Used\nLoading...", 22, WHITE, 1);
+        storage.setGravity(Gravity.CENTER);
+        content.addView(storage, panelLp());
+
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        final TextView files = tv("📁 Files\n0", 20, WHITE, 1);
+        final TextView photos = tv("🖼 Photos\n0", 20, WHITE, 1);
+        final TextView videos = tv("🎥 Videos\n0", 20, WHITE, 1);
+        final TextView temp = tv("🌡 Temperature\nLoading...", 20, WHITE, 1);
+        grid.addView(card(files));
+        grid.addView(card(photos));
+        grid.addView(card(videos));
+        grid.addView(card(temp));
+        content.addView(grid);
+
+        TextView qa = tv("Quick Actions", 26, YELLOW, 1);
+        content.addView(qa);
+        Button g = btn("Gallery", TOP);
+        Button u = btn("Upload Files", TOP);
+        Button a = btn("Account", TOP);
+        Button ad = btn("Admin", TOP);
+        content.addView(g);
+        content.addView(u);
+        content.addView(a);
+        content.addView(ad);
+
+        g.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showGallery(); }});
+        u.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showUpload(); }});
+        a.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showAccount(); }});
+        ad.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showAdmin(); }});
+
+        runIo(new Job() {
+            public void run() throws Exception {
+                final JSONObject cu = safeGet("/api/current-user");
+                final JSONObject d = safeGet("/api/dashboard");
+                final JSONObject t = safeGet("/api/temperature");
+
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        String em = q(cu, "email", "user", "username");
+                        if (em.length() == 0 || em.equals("unknown")) em = prefs.getString("email", currentEmail);
+                        currentEmail = em;
+                        user.setText("Logged in as: " + em);
+
+                        String used = q(d, "usedStorage", "realUserUsed", "storageUsed", "usedText");
+                        String quota = q(d, "quota", "allowedStorage", "totalStorage", "quotaText");
+                        int percent = qi(d, "storagePercent", "percent", "usedPercent");
+                        storage.setText("Storage Used\n" + percent + "%\n" + used + (quota.length() > 0 ? " / " + quota : " used"));
+
+                        files.setText("📁 Files\n" + q(d, "totalFiles", "realFiles", "fileCount"));
+                        photos.setText("🖼 Photos\n" + q(d, "totalPhotos", "photos", "photoCount"));
+                        videos.setText("🎥 Videos\n" + q(d, "totalVideos", "videos", "videoCount"));
+
+                        String tempText = q(t, "displayText", "temperatureText");
+                        String drive = q(t, "assignedDrive");
+                        temp.setText("🌡 Temperature\n" + (tempText.length() > 0 ? tempText : "No sensor") + "\n" + drive);
+                    }
+                });
+            }
+        });
+    }
+
+    private JSONObject safeGet(String path) {
+        try { return getJson(path); } catch (Exception e) { return new JSONObject(); }
+    }
+
+    private LinearLayout.LayoutParams panelLp() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(8), 0, dp(8));
+        return lp;
+    }
+
+    private View card(View inner) {
+        LinearLayout p = panel();
+        p.addView(inner);
+        return p;
+    }
+
+    private void showGallery() {
+        baseScreen("Gallery", true);
+        selected.clear();
+        selectMode = false;
+        allMedia.clear();
+        filteredMedia.clear();
+        page = 1;
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button refresh = btn("Refresh", GREEN);
+        Button select = btn("Select", TOP);
+        Spinner sp = new Spinner(this);
+        ArrayAdapter<String> ad = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, new String[]{"All", "Photos only", "Videos only"});
+        ad.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        sp.setAdapter(ad);
+
+        controls.addView(refresh, new LinearLayout.LayoutParams(0, dp(54), 1));
+        controls.addView(select, new LinearLayout.LayoutParams(0, dp(54), 1));
+        controls.addView(sp, new LinearLayout.LayoutParams(0, dp(54), 1));
+        content.addView(controls);
+
+        galleryStatus = tv("Loading...", 13, YELLOW, 0);
+        content.addView(galleryStatus, panelLp());
+
+        LinearLayout p1 = pagerBar();
+        content.addView(p1);
+
+        galleryGrid = new GridLayout(this);
+        galleryGrid.setColumnCount(3);
+        content.addView(galleryGrid);
+
+        LinearLayout p2 = pagerBar();
+        content.addView(p2);
+
+        floatingSelectBar = new LinearLayout(this);
+        floatingSelectBar.setOrientation(LinearLayout.HORIZONTAL);
+        floatingSelectBar.setGravity(Gravity.CENTER);
+        floatingSelectBar.setPadding(dp(8), dp(8), dp(8), dp(8));
+        floatingSelectBar.setBackgroundColor(TOP);
+        root.addView(floatingSelectBar, new LinearLayout.LayoutParams(-1, -2));
+        updateFloatingBar();
+
+        refresh.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { loadGallery(); }});
+        select.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                selectMode = !selectMode;
+                if (!selectMode) selected.clear();
+                renderGallery();
+            }
+        });
+        sp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
+                filter = pos == 1 ? "photo" : pos == 2 ? "video" : "all";
+                page = 1;
+                applyGalleryFilter();
+            }
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+
+        loadGallery();
+    }
+
+    private LinearLayout pagerBar() {
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.HORIZONTAL);
+        l.setGravity(Gravity.CENTER);
+        Button prev = btn("Previous", TOP);
+        Button next = btn("Next", TOP);
+        TextView info = tv("Page 1 / 1", 15, YELLOW, 1);
+        if (pageInfoTop == null) pageInfoTop = info; else pageInfoBottom = info;
+
+        prev.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { if (page > 1) { page--; renderGallery(); } }});
+        next.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+            int max = Math.max(1, (int)Math.ceil(filteredMedia.size() / (double)pageSize));
+            if (page < max) { page++; renderGallery(); }
+        }});
+
+        l.addView(prev, new LinearLayout.LayoutParams(0, dp(54), 1));
+        l.addView(info, new LinearLayout.LayoutParams(0, dp(54), 1));
+        l.addView(next, new LinearLayout.LayoutParams(0, dp(54), 1));
+        return l;
+    }
+
+    private void loadGallery() {
+        galleryStatus.setText("Loading file list...");
+        runIo(new Job() {
+            public void run() throws Exception {
+                JSONObject data = getJson("/api/files");
+                JSONArray arr = data.optJSONArray("files");
+                allMedia.clear();
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject f = arr.optJSONObject(i);
+                        if (f == null) continue;
+                        if (isPhoto(f) || isVideo(f)) allMedia.add(f);
+                    }
+                }
+                final String st = "User: " + q(data, "user") + "\nRoot: " + q(data, "root") + "\nSupported media: " + allMedia.size() + "\nPage size: 30";
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        galleryStatus.setText(st);
+                        applyGalleryFilter();
+                    }
+                });
+            }
+        });
+    }
+
+    private boolean isPhoto(JSONObject f) {
+        String x = (q(f, "mime", "type") + " " + q(f, "name", "filename", "path")).toLowerCase();
+        return x.contains("image/") || x.matches(".*\\.(jpg|jpeg|png|webp|gif|bmp|heic|heif|tif|tiff)$");
+    }
+
+    private boolean isVideo(JSONObject f) {
+        String x = (q(f, "mime", "type") + " " + q(f, "name", "filename", "path")).toLowerCase();
+        return x.contains("video/") || x.matches(".*\\.(mp4|mov|m4v|3gp|webm|mkv|avi)$");
+    }
+
+    private void applyGalleryFilter() {
+        filteredMedia.clear();
+        for (JSONObject f : allMedia) {
+            if ("photo".equals(filter) && !isPhoto(f)) continue;
+            if ("video".equals(filter) && !isVideo(f)) continue;
+            filteredMedia.add(f);
+        }
+        renderGallery();
+    }
+
+    private void renderGallery() {
+        if (galleryGrid == null) return;
+        galleryGrid.removeAllViews();
+        int maxPage = Math.max(1, (int)Math.ceil(filteredMedia.size() / (double)pageSize));
+        if (page > maxPage) page = maxPage;
+        if (page < 1) page = 1;
+
+        String info = "Page " + page + " / " + maxPage;
+        if (pageInfoTop != null) pageInfoTop.setText(info);
+        if (pageInfoBottom != null) pageInfoBottom.setText(info);
+
+        int start = (page - 1) * pageSize;
+        int end = Math.min(filteredMedia.size(), start + pageSize);
+
+        for (int i = start; i < end; i++) {
+            final int index = i;
+            JSONObject f = filteredMedia.get(i);
+            LinearLayout tile = panel();
+            tile.setPadding(dp(4), dp(4), dp(4), dp(4));
+            GridLayout.LayoutParams glp = new GridLayout.LayoutParams();
+            glp.width = getResources().getDisplayMetrics().widthPixels / 3 - dp(14);
+            glp.setMargins(dp(3), dp(3), dp(3), dp(3));
+            tile.setLayoutParams(glp);
+
+            String name = fileName(f);
+            String key = itemKey(f);
+            TextView label = tv((selected.contains(key) ? "✓ " : "") + name, 10, selected.contains(key) ? GREEN : WHITE, 1);
+
+            if (isPhoto(f)) {
+                final ImageView img = new ImageView(this);
+                img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                img.setBackgroundColor(Color.BLACK);
+                tile.addView(img, new LinearLayout.LayoutParams(-1, dp(110)));
+                loadBitmapInto(img, fileUrl(f), true);
+            } else {
+                TextView v = tv("🎥\nVIDEO", 18, YELLOW, 1);
+                v.setGravity(Gravity.CENTER);
+                tile.addView(v, new LinearLayout.LayoutParams(-1, dp(110)));
+            }
+
+            tile.addView(label);
+            tile.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    if (selectMode) {
+                        JSONObject f = filteredMedia.get(index);
+                        String k = itemKey(f);
+                        if (selected.contains(k)) selected.remove(k); else selected.add(k);
+                        renderGallery();
+                    } else {
+                        openPreview(index);
+                    }
+                }
+            });
+
+            galleryGrid.addView(tile);
+        }
+        updateFloatingBar();
+    }
+
+    private void updateFloatingBar() {
+        if (floatingSelectBar == null) return;
+        floatingSelectBar.removeAllViews();
+        if (!selectMode || selected.isEmpty()) {
+            floatingSelectBar.setVisibility(View.GONE);
+            return;
+        }
+        floatingSelectBar.setVisibility(View.VISIBLE);
+        floatingSelectBar.addView(tv(selected.size() + " selected", 13, YELLOW, 1));
+        Button down = btn("Download", YELLOW);
+        Button share = btn("Share", TOP);
+        Button del = btn("Delete", RED);
+        Button clear = btn("Clear", TOP);
+        floatingSelectBar.addView(down);
+        floatingSelectBar.addView(share);
+        floatingSelectBar.addView(del);
+        floatingSelectBar.addView(clear);
+
+        down.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { downloadSelected(); }});
+        share.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { shareSelected(); }});
+        del.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { deleteSelected(); }});
+        clear.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { selected.clear(); renderGallery(); }});
+    }
+
+    private String fileName(JSONObject f) { String n = q(f, "name", "filename", "path"); return n.length() == 0 ? "file" : n; }
+    private String fileUrl(JSONObject f) { String u = q(f, "url"); return u.startsWith("http") ? u : url(u); }
+    private String itemKey(JSONObject f) { String p = q(f, "path", "name", "filename", "url"); return p.length() == 0 ? String.valueOf(f.hashCode()) : p; }
+
+    private ArrayList<JSONObject> selectedItems() {
+        ArrayList<JSONObject> out = new ArrayList<>();
+        for (JSONObject f : allMedia) if (selected.contains(itemKey(f))) out.add(f);
+        return out;
+    }
+
+    private void loadBitmapInto(final ImageView view, final String u, final boolean thumb) {
+        io.execute(new Runnable() {
+            public void run() {
+                try {
+                    HttpURLConnection c = (HttpURLConnection)new URL(u).openConnection();
+                    if (cookie != null && cookie.length() > 0) c.setRequestProperty("Cookie", cookie);
+                    c.setConnectTimeout(10000);
+                    c.setReadTimeout(30000);
+                    BitmapFactory.Options opt = new BitmapFactory.Options();
+                    if (thumb) opt.inSampleSize = 4;
+                    final Bitmap bmp = BitmapFactory.decodeStream(c.getInputStream(), null, opt);
+                    if (bmp != null) runOnUiThread(new Runnable() { public void run() { view.setImageBitmap(bmp); }});
+                } catch (Exception ignored) {}
+            }
+        });
+    }
+
+    private void openPreview(int index) {
+        previewIndex = index;
+        final Dialog d = new Dialog(this);
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        d.setContentView(makePreviewView(d));
+        Window w = d.getWindow();
+        d.show();
+        Window win = d.getWindow();
+        if (win != null) {
+            win.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            win.setBackgroundDrawableResource(android.R.color.black);
+        }
+    }
+
+    private View makePreviewView(final Dialog dialog) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackgroundColor(Color.BLACK);
+        box.setPadding(dp(8), dp(28), dp(8), dp(18));
+
+        final TextView counter = tv("", 13, YELLOW, 1);
+        counter.setGravity(Gravity.CENTER);
+        box.addView(counter);
+
+        final FrameLayout stage = new FrameLayout(this);
+        box.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+        box.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+
+        Button prev = btn("Previous", TOP);
+        Button next = btn("Next", TOP);
+        Button zoomIn = btn("Zoom +", TOP);
+        Button zoomOut = btn("Zoom -", TOP);
+        Button dl = btn("Download", YELLOW);
+        Button sh = btn("Share", TOP);
+        Button del = btn("Delete", RED);
+        Button close = btn("Close", TOP);
+
+        actions.addView(prev);
+        actions.addView(next);
+        actions.addView(zoomIn);
+        actions.addView(zoomOut);
+        actions.addView(dl);
+        actions.addView(sh);
+        actions.addView(del);
+        actions.addView(close);
+
+        final Runnable[] render = new Runnable[1];
+        render[0] = new Runnable() {
+            public void run() {
+                stage.removeAllViews();
+                if (previewIndex < 0) previewIndex = filteredMedia.size() - 1;
+                if (previewIndex >= filteredMedia.size()) previewIndex = 0;
+                JSONObject f = filteredMedia.get(previewIndex);
+                counter.setText((previewIndex + 1) + " / " + filteredMedia.size() + " · " + fileName(f));
+
+                if (isPhoto(f)) {
+                    ZoomImageView img = new ZoomImageView(MainActivity.this);
+                    img.setBackgroundColor(Color.BLACK);
+                    img.onSwipeLeft = new Runnable() { public void run() { previewIndex++; render[0].run(); }};
+                    img.onSwipeRight = new Runnable() { public void run() { previewIndex--; render[0].run(); }};
+                    stage.addView(img, new FrameLayout.LayoutParams(-1, -1));
+                    loadBitmapInto(img, fileUrl(f), false);
+                    zoomIn.setVisibility(View.VISIBLE);
+                    zoomOut.setVisibility(View.VISIBLE);
+                    zoomIn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+                        View child = stage.getChildAt(0);
+                        if (child instanceof ZoomImageView) ((ZoomImageView)child).zoomIn();
+                    }});
+                    zoomOut.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+                        View child = stage.getChildAt(0);
+                        if (child instanceof ZoomImageView) ((ZoomImageView)child).zoomOut();
+                    }});
+                } else {
+                    TextView video = tv("🎥\nVideo\nUse Download or Share to open/play.", 24, WHITE, 1);
+                    video.setGravity(Gravity.CENTER);
+                    stage.addView(video, new FrameLayout.LayoutParams(-1, -1));
+                    zoomIn.setVisibility(View.GONE);
+                    zoomOut.setVisibility(View.GONE);
+                }
+            }
+        };
+
+        prev.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { previewIndex--; render[0].run(); }});
+        next.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { previewIndex++; render[0].run(); }});
+        dl.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { downloadFile(filteredMedia.get(previewIndex)); }});
+        sh.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { shareFile(filteredMedia.get(previewIndex)); }});
+        del.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { deleteOne(filteredMedia.get(previewIndex)); dialog.dismiss(); }});
+        close.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { dialog.dismiss(); }});
+
+        render[0].run();
+        return box;
+    }
+
+    public static class ZoomImageView extends ImageView {
+        Matrix matrix = new Matrix();
+        float scale = 1f, tx = 0f, ty = 0f;
+        float sx, sy;
+        long lastTap = 0;
+        Runnable onSwipeLeft, onSwipeRight;
+
+        public ZoomImageView(Context c) {
+            super(c);
+            setScaleType(ScaleType.MATRIX);
+            setAdjustViewBounds(true);
+        }
+
+        public void zoomIn() { scale = Math.min(5f, scale + .5f); apply(); }
+        public void zoomOut() { scale = Math.max(1f, scale - .5f); if (scale == 1f) { tx = 0; ty = 0; } apply(); }
+
+        private void apply() {
+            matrix.reset();
+            matrix.postScale(scale, scale, getWidth()/2f, getHeight()/2f);
+            matrix.postTranslate(tx, ty);
+            setImageMatrix(matrix);
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                sx = e.getX(); sy = e.getY();
+                return true;
+            }
+            if (e.getAction() == MotionEvent.ACTION_MOVE && scale > 1f) {
+                tx += e.getX() - sx;
+                ty += e.getY() - sy;
+                sx = e.getX(); sy = e.getY();
+                apply();
+                return true;
+            }
+            if (e.getAction() == MotionEvent.ACTION_UP) {
+                float dx = e.getX() - sx;
+                float dy = e.getY() - sy;
+                long now = System.currentTimeMillis();
+                if (now - lastTap < 300) {
+                    if (scale > 1f) { scale = 1f; tx = 0; ty = 0; }
+                    else scale = 2.5f;
+                    apply();
+                    lastTap = 0;
+                    return true;
+                }
+                lastTap = now;
+                if (scale <= 1f && Math.abs(dx) > 80 && Math.abs(dy) < 90) {
+                    if (dx < 0 && onSwipeLeft != null) onSwipeLeft.run();
+                    if (dx > 0 && onSwipeRight != null) onSwipeRight.run();
+                }
+            }
+            return true;
+        }
+    }
+
+    private void downloadSelected() {
+        for (JSONObject f : selectedItems()) downloadFile(f);
+    }
+
+    private void downloadFile(JSONObject f) {
+        try {
+            DownloadManager dm = (DownloadManager)getSystemService(DOWNLOAD_SERVICE);
+            DownloadManager.Request r = new DownloadManager.Request(Uri.parse(fileUrl(f)));
+            r.setTitle(fileName(f));
+            r.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName(f));
+            r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            if (cookie != null && cookie.length() > 0) r.addRequestHeader("Cookie", cookie);
+            dm.enqueue(r);
+            toast("Download started");
+        } catch (Exception e) { alert("Download failed", e.getMessage()); }
+    }
+
+    private void shareSelected() {
+        ArrayList<JSONObject> items = selectedItems();
+        if (items.isEmpty()) return;
+        if (items.size() == 1) { shareFile(items.get(0)); return; }
+        StringBuilder sb = new StringBuilder();
+        for (JSONObject f : items) sb.append(fileUrl(f)).append("\n");
+        shareText("Family Cloud files", sb.toString());
+    }
+
+    private void shareFile(JSONObject f) {
+        shareText(fileName(f), fileUrl(f));
+    }
+
+    private void shareText(String title, String text) {
+        try {
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType("text/plain");
+            i.putExtra(Intent.EXTRA_SUBJECT, title);
+            i.putExtra(Intent.EXTRA_TEXT, text);
+            startActivity(Intent.createChooser(i, "Share"));
+        } catch (Exception e) {
+            ClipboardManager cm = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText(title, text));
+            toast("Copied link");
+        }
+    }
+
+    private void deleteSelected() {
+        final ArrayList<JSONObject> items = selectedItems();
+        if (items.isEmpty()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Delete selected?")
+                .setMessage("Delete " + items.size() + " file(s)? This cannot be undone.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (d, w) -> runIo(new Job() {
+                    public void run() throws Exception {
+                        for (JSONObject f : items) deleteFileRequest(f);
+                        selected.clear();
+                        runOnUiThread(new Runnable() { public void run() { loadGallery(); }});
+                    }
+                }))
+                .show();
+    }
+
+    private void deleteOne(final JSONObject f) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete file?")
+                .setMessage(fileName(f))
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (d, w) -> runIo(new Job() {
+                    public void run() throws Exception {
+                        deleteFileRequest(f);
+                        runOnUiThread(new Runnable() { public void run() { loadGallery(); }});
+                    }
+                }))
+                .show();
+    }
+
+    private void deleteFileRequest(JSONObject f) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("path", q(f, "path", "name", "filename"));
+        postJson("/api/delete-file", body);
+    }
+
+    private void showUpload() {
+        baseScreen("Upload", true);
+        content.addView(tv("Upload files to your current logged-in Family Cloud account. No manual email nonsense.", 15, WHITE, 0));
+        Button pick = btn("Choose Files", GREEN);
+        content.addView(pick, new LinearLayout.LayoutParams(-1, dp(60)));
+        final TextView status = tv("Waiting for files...", 14, YELLOW, 0);
+        content.addView(status, panelLp());
+
+        pick.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                i.setType("*/*");
+                i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                startActivityForResult(i, PICK_UPLOAD);
+            }
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request == PICK_UPLOAD && result == RESULT_OK && data != null) {
+            final ArrayList<Uri> uris = new ArrayList<>();
+            if (data.getClipData() != null) {
+                for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+            } else if (data.getData() != null) uris.add(data.getData());
+
+            baseScreen("Uploading", true);
+            final TextView status = tv("Starting upload...", 15, YELLOW, 1);
+            content.addView(status, panelLp());
+
+            runIo(new Job() {
+                public void run() throws Exception {
+                    int ok = 0, fail = 0;
+                    for (int i = 0; i < uris.size(); i++) {
+                        final int pos = i + 1;
+                        runOnUiThread(new Runnable() { public void run() { status.setText("Uploading " + pos + " / " + uris.size()); }});
+                        try { uploadOne(uris.get(i)); ok++; } catch (Exception e) { fail++; }
+                    }
+                    final int fok = ok, ffail = fail;
+                    runOnUiThread(new Runnable() { public void run() { status.setText("Finished. OK: " + fok + " Failed: " + ffail); }});
+                }
+            });
+        }
+    }
+
+    private String getName(Uri uri) {
+        String name = "upload.bin";
+        Cursor c = getContentResolver().query(uri, null, null, null, null);
+        if (c != null) {
+            int idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+            if (idx >= 0 && c.moveToFirst()) name = c.getString(idx);
+            c.close();
+        }
+        return name == null ? "upload.bin" : name;
+    }
+
+    private void uploadOne(Uri uri) throws Exception {
+        String boundary = "FC" + System.currentTimeMillis();
+        HttpURLConnection c = (HttpURLConnection)new URL(url("/api/upload")).openConnection();
+        c.setRequestMethod("POST");
+        c.setDoOutput(true);
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(120000);
+        c.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        if (cookie != null && cookie.length() > 0) c.setRequestProperty("Cookie", cookie);
+
+        String name = getName(uri);
+        OutputStream os = c.getOutputStream();
+        os.write(("--" + boundary + "\r\n").getBytes());
+        os.write(("Content-Disposition: form-data; name=\"file\"; filename=\"" + name.replace("\"", "_") + "\"\r\n").getBytes());
+        os.write(("Content-Type: application/octet-stream\r\n\r\n").getBytes());
+
+        InputStream is = getContentResolver().openInputStream(uri);
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = is.read(buf)) > 0) os.write(buf, 0, n);
+        is.close();
+
+        os.write(("\r\n--" + boundary + "--\r\n").getBytes());
+        os.close();
+
+        int code = c.getResponseCode();
+        if (code >= 400) throw new IOException(readStream(c.getErrorStream()));
+    }
+
+    private void showAccount() {
+        baseScreen("Account", true);
+        content.addView(tv("Logged in as:", 16, YELLOW, 1));
+        content.addView(tv(currentEmail.length() > 0 ? currentEmail : prefs.getString("email", "unknown"), 16, WHITE, 0));
+        Button dash = btn("Dashboard", TOP);
+        Button logout = btn("Logout", RED);
+        content.addView(dash);
+        content.addView(logout);
+        dash.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showDashboard(); }});
+        logout.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { logout(); }});
+    }
+
+    private void showAdmin() {
+        baseScreen("Admin", true);
+        final EditText code = input("Admin code", true);
+        Button unlock = btn("Unlock Admin", GREEN);
+        content.addView(code);
+        content.addView(unlock);
+
+        unlock.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                runIo(new Job() {
+                    public void run() throws Exception {
+                        JSONObject b = new JSONObject();
+                        b.put("code", code.getText().toString());
+                        postJson("/api/admin/unlock", b);
+                        runOnUiThread(new Runnable() { public void run() { loadAdminPanel(); }});
+                    }
+                });
+            }
+        });
+    }
+
+    private void loadAdminPanel() {
+        baseScreen("Admin Panel", true);
+        final TextView out = tv("Loading admin data...", 13, WHITE, 0);
+        content.addView(out, panelLp());
+
+        runIo(new Job() {
+            public void run() throws Exception {
+                final JSONObject dash = safeGet("/api/admin/dashboard");
+                final JSONObject drives = safeGet("/api/admin/drives");
+                final JSONObject users = safeGet("/api/admin/users");
+
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        StringBuilder sb = new StringBuilder();
+                        sb.append("Total Users: ").append(q(dash, "totalUsers")).append("\n");
+                        sb.append("Real User Used: ").append(q(dash, "realUserUsed")).append("\n");
+                        sb.append("Total Storage Given: ").append(q(dash, "totalStorageGiven")).append("\n");
+                        sb.append("Real Files: ").append(q(dash, "realFiles")).append("\n");
+                        sb.append("Drive Count: ").append(q(dash, "driveCount")).append("\n\n");
+
+                        sb.append("Physical Drives:\n");
+                        JSONArray d = drives.optJSONArray("drives");
+                        if (d != null) for (int i = 0; i < d.length(); i++) {
+                            JSONObject x = d.optJSONObject(i);
+                            if (x == null) continue;
+                            sb.append("- ").append(q(x, "name")).append(" · ").append(q(x, "system")).append(" · Temp: ").append(q(x, "temperature")).append(" · Free: ").append(q(x, "free")).append("\n");
+                        }
+
+                        sb.append("\nUsers:\n");
+                        JSONArray u = users.optJSONArray("users");
+                        if (u != null) for (int i = 0; i < u.length(); i++) {
+                            JSONObject x = u.optJSONObject(i);
+                            if (x == null) continue;
+                            sb.append("- ").append(q(x, "email")).append(" · ").append(q(x, "role")).append(" · ").append(q(x, "drive", "driveName")).append(" · ").append(q(x, "used")).append(" / ").append(q(x, "storage")).append("\n");
+                        }
+
+                        out.setText(sb.toString());
+                        addAdminCreateUser(drives);
+                    }
+                });
+            }
+        });
+    }
+
+    private void addAdminCreateUser(JSONObject drivesData) {
+        content.addView(tv("Add New User", 24, YELLOW, 1));
+        final EditText email = input("user@example.com", false);
+        final EditText pass = input("Temporary password", false);
+        final EditText storage = input("Storage, example: 50GB", false);
+
+        final Spinner driveSpin = new Spinner(this);
+        final Spinner roleSpin = new Spinner(this);
+
+        ArrayList<String> driveNames = new ArrayList<>();
+        JSONArray ds = drivesData.optJSONArray("drives");
+        if (ds != null) for (int i = 0; i < ds.length(); i++) {
+            JSONObject d = ds.optJSONObject(i);
+            if (d != null) driveNames.add(q(d, "name", "driveName"));
+        }
+        if (driveNames.isEmpty()) driveNames.add("SERVER");
+
+        driveSpin.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, driveNames));
+        roleSpin.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"User", "Admin"}));
+
+        Button create = btn("Create User", GREEN);
+        content.addView(email);
+        content.addView(pass);
+        content.addView(storage);
+        content.addView(driveSpin);
+        content.addView(roleSpin);
+        content.addView(create);
+
+        create.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                runIo(new Job() {
+                    public void run() throws Exception {
+                        JSONObject b = new JSONObject();
+                        b.put("email", email.getText().toString().trim());
+                        b.put("password", pass.getText().toString());
+                        b.put("storage", storage.getText().toString().trim());
+                        b.put("drive", String.valueOf(driveSpin.getSelectedItem()));
+                        b.put("role", String.valueOf(roleSpin.getSelectedItem()));
+                        postJson("/api/admin/add-user", b);
+                        runOnUiThread(new Runnable() { public void run() { toast("User created"); loadAdminPanel(); }});
+                    }
+                });
+            }
+        });
+    }
+
+    @Override public void onBackPressed() {
+        showDashboard();
     }
 }

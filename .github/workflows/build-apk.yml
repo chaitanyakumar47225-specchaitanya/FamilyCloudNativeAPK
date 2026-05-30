@@ -2,73 +2,35 @@ name: Build Family Cloud Native APK
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Set up modern Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.7
-
-      - name: Find Android project
-        run: |
-          PROJECT_DIR=$(find . \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs dirname)
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "No Android Gradle project found"
-            exit 1
-          fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project dir: $PROJECT_DIR"
-
-      - name: Show Gradle version
-        run: |
-          cd "$PROJECT_DIR"
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew --version
-          else
-            gradle --version
-          fi
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew || true
 
       - name: Build debug APK
         run: |
-          cd "$PROJECT_DIR"
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew clean assembleDebug --stacktrace
+          if [ -x ./gradlew ]; then
+            ./gradlew clean assembleDebug
           else
-            gradle clean assembleDebug --stacktrace
+            gradle clean assembleDebug
           fi
 
-      - name: List APK files
-        if: always()
-        run: |
-          find "$PROJECT_DIR" -type f -name "*.apk" || true
-
-      - name: Upload APK
-        if: success()
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FamilyCloud-Native-Debug-APK
-          path: |
-            **/build/outputs/apk/debug/*.apk
-            **/build/outputs/apk/**/*.apk
+          name: family-cloud-native-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
