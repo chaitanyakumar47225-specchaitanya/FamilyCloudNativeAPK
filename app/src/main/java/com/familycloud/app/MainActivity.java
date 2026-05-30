@@ -56,6 +56,9 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
 
     public static final String PREFS = "family_cloud_prefs";
+    public static final String KEY_COOKIE = "cookie";
+    public static final String ONLINE_URL = "";
+    public static final String LOCAL_URL = "";
 
     // Compatibility constants for old BackupWorker / FreeSpaceManager code.
     public static final String PREF_SERVER_URL = "base_url";
@@ -72,7 +75,7 @@ public class MainActivity extends Activity {
     public static final String MODE_LOCAL = "local";
     public static final String MODE_ONLINE = "online";
 
-    private static final String KEY_BASE_URL = "base_url";
+    public static final String KEY_BASE_URL = "base_url";
     private static final int PICK_FILES = 4001;
 
     private final int BG = Color.rgb(8, 10, 18);
