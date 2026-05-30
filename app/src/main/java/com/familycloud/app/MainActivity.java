@@ -691,6 +691,342 @@ public class MainActivity extends Activity {
         });
     }
 
+
+    private LinearLayout accountPanel() {
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.VERTICAL);
+        p.setPadding(dp(16), dp(16), dp(16), dp(16));
+        p.setBackground(round(Color.rgb(8, 0, 0), dp(16), Color.rgb(170, 105, 0), 1));
+        return p;
+    }
+
+    private TextView accountTitle(String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(TEXT);
+        t.setTextSize(23);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        return t;
+    }
+
+    private TextView accountBigValue(String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(TEXT);
+        t.setTextSize(23);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        return t;
+    }
+
+    private View accountStatCard(TextView value, String label) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setGravity(Gravity.CENTER_VERTICAL);
+        c.setPadding(dp(16), dp(12), dp(16), dp(12));
+        c.setBackground(round(Color.rgb(8, 0, 0), dp(14), Color.rgb(170, 105, 0), 1));
+
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setTextColor(YELLOW);
+        l.setTextSize(14);
+        l.setTypeface(Typeface.DEFAULT_BOLD);
+
+        c.addView(value);
+        c.addView(l);
+        return c;
+    }
+
+    private EditText accountInput(String hint) {
+        EditText e = new EditText(this);
+        e.setSingleLine(true);
+        e.setHint(hint);
+        e.setTextColor(TEXT);
+        e.setHintTextColor(MUTED);
+        e.setPadding(dp(12), 0, dp(12), 0);
+        e.setBackground(round(Color.rgb(8, 0, 0), dp(12), Color.rgb(170, 105, 0), 1));
+        return e;
+    }
+
+    private void loadAccountStats(final TextView storageUsed, final TextView files, final TextView photosVideos) {
+        getText("/api/dashboard", new TextCallback() {
+            @Override public void ok(String text) {
+                try {
+                    JSONObject obj = new JSONObject(text);
+
+                    String used = accountFindJsonText(obj, new String[]{"realUserUsed", "usedStorage", "used", "storageUsed", "usedText"});
+                    String f = accountFindJsonText(obj, new String[]{"realFiles", "totalFiles", "files", "fileCount"});
+                    String ph = accountFindJsonText(obj, new String[]{"totalPhotos", "photos", "photoCount", "images"});
+                    String vi = accountFindJsonText(obj, new String[]{"totalVideos", "videos", "videoCount"});
+
+                    if (used.length() > 0) storageUsed.setText(used);
+                    else storageUsed.setText("—");
+
+                    if (f.length() > 0) files.setText(f);
+                    else files.setText("—");
+
+                    if (ph.length() > 0 || vi.length() > 0) {
+                        photosVideos.setText(emptyAccount(ph) + " / " + emptyAccount(vi));
+                    } else {
+                        photosVideos.setText("—");
+                    }
+                } catch (Exception e) {
+                    storageUsed.setText("—");
+                    files.setText("—");
+                    photosVideos.setText("—");
+                }
+            }
+
+            @Override public void fail(String err) {
+                storageUsed.setText("—");
+                files.setText("—");
+                photosVideos.setText("—");
+            }
+        });
+    }
+
+    private void loadZipStatus(final TextView status, final ProgressBar progress) {
+        getText("/api/zip-status", new TextCallback() {
+            @Override public void ok(String text) {
+                status.setText(pretty(text));
+                int percent = parseAccountPercent(accountFindJsonTextFromText(text, new String[]{"progress", "percent", "zipProgress"}));
+                if (percent >= 0) progress.setProgress(percent);
+            }
+
+            @Override public void fail(String err) {
+                status.setText("No ZIP requested yet.");
+                progress.setProgress(0);
+            }
+        });
+    }
+
+    private void createZipBackup(final TextView status, final ProgressBar progress) {
+        status.setText("ZIP request sent. Building may take time depending on storage size.");
+        progress.setProgress(5);
+
+        userPostFirst(new String[]{
+                        "/api/zip-backup",
+                        "/api/create-zip",
+                        "/api/zip/create",
+                        "/api/request-zip"
+                },
+                "",
+                new TextCallback() {
+                    @Override public void ok(String text) {
+                        status.setText(pretty(text));
+                        progress.setProgress(25);
+                        toast("ZIP backup requested");
+                    }
+
+                    @Override public void fail(String err) {
+                        status.setText("ZIP request failed:\n" + err);
+                    }
+                });
+    }
+
+    private void downloadFilesOneByOne() {
+        toast("Fetching file list...");
+
+        getText("/api/files", new TextCallback() {
+            @Override public void ok(String text) {
+                ArrayList<FileItem> items = parseFiles(text);
+                int queued = 0;
+
+                for (int i = 0; i < items.size(); i++) {
+                    FileItem item = items.get(i);
+                    if (item.url != null && item.url.length() > 0) {
+                        try {
+                            enqueueDownloadSilent(item);
+                            queued++;
+                        } catch (Exception ignored) {}
+                    }
+                }
+
+                toast("Queued " + queued + " files for download");
+            }
+
+            @Override public void fail(String err) {
+                toast("File list failed: " + err);
+            }
+        });
+    }
+
+    private void enqueueDownloadSilent(FileItem item) throws Exception {
+        DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        DownloadManager.Request r = new DownloadManager.Request(Uri.parse(item.url));
+        r.setTitle(item.name);
+        r.setDescription("Downloading from Family Cloud");
+        r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+        r.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, item.name);
+        dm.enqueue(r);
+    }
+
+    private void changeAccountPassword(String oldPassword, String newPassword) {
+        if (newPassword == null || newPassword.trim().length() < 4) {
+            toast("New password too short");
+            return;
+        }
+
+        userPostFirst(new String[]{
+                        "/api/change-password",
+                        "/api/account/change-password",
+                        "/api/account/password",
+                        "/change-password"
+                },
+                "oldPassword=" + accountEnc(oldPassword) + "&newPassword=" + accountEnc(newPassword),
+                new TextCallback() {
+                    @Override public void ok(String text) {
+                        toast("Password changed");
+                    }
+
+                    @Override public void fail(String err) {
+                        toast("Password change failed: " + err);
+                    }
+                });
+    }
+
+    private void deleteAllMyData() {
+        userPostFirst(new String[]{
+                        "/api/delete-all",
+                        "/delete-all",
+                        "/api/account/delete-all",
+                        "/api/user/delete-all"
+                },
+                "confirm=DELETE",
+                new TextCallback() {
+                    @Override public void ok(String text) {
+                        toast("All data delete request completed");
+                        showAccount();
+                    }
+
+                    @Override public void fail(String err) {
+                        toast("Delete failed: " + err);
+                    }
+                });
+    }
+
+    private void userPostFirst(final String[] endpoints, final String body, final TextCallback cb) {
+        io.execute(new Runnable() {
+            @Override public void run() {
+                String lastErr = "";
+
+                for (int i = 0; i < endpoints.length; i++) {
+                    try {
+                        HttpURLConnection c = (HttpURLConnection) new URL(abs(endpoints[i])).openConnection();
+                        applySavedCookie(c);
+                        c.setConnectTimeout(12000);
+                        c.setReadTimeout(30000);
+                        c.setDoInput(true);
+                        c.setDoOutput(true);
+                        c.setUseCaches(false);
+                        c.setRequestMethod("POST");
+                        c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+                        DataOutputStream out = new DataOutputStream(c.getOutputStream());
+                        out.writeBytes(body == null ? "" : body);
+                        out.flush();
+                        out.close();
+
+                        int code = c.getResponseCode();
+                        saveCookieFromResponse(c);
+
+                        final String response = read(code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream());
+
+                        if (code >= 200 && code < 300) {
+                            ui.post(new Runnable() {
+                                @Override public void run() {
+                                    cb.ok(response);
+                                }
+                            });
+                            return;
+                        }
+
+                        lastErr = endpoints[i] + " → HTTP " + code + " " + response;
+                    } catch (Exception e) {
+                        lastErr = endpoints[i] + " → " + e.getMessage();
+                    }
+                }
+
+                final String err = lastErr;
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        cb.fail(err);
+                    }
+                });
+            }
+        });
+    }
+
+    private String accountFindJsonTextFromText(String text, String[] keys) {
+        try {
+            String s = text.trim();
+            if (s.startsWith("{")) return accountFindJsonText(new JSONObject(s), keys);
+            if (s.startsWith("[")) return accountFindJsonText(new JSONArray(s), keys);
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private String accountFindJsonText(Object node, String[] keys) {
+        try {
+            if (node instanceof JSONObject) {
+                JSONObject o = (JSONObject) node;
+
+                for (int i = 0; i < keys.length; i++) {
+                    String k = keys[i];
+                    if (o.has(k) && !o.isNull(k)) {
+                        Object v = o.get(k);
+                        if (!(v instanceof JSONObject) && !(v instanceof JSONArray)) {
+                            return String.valueOf(v);
+                        }
+                    }
+                }
+
+                JSONArray names = o.names();
+                if (names != null) {
+                    for (int i = 0; i < names.length(); i++) {
+                        String found = accountFindJsonText(o.get(names.getString(i)), keys);
+                        if (found.length() > 0) return found;
+                    }
+                }
+            } else if (node instanceof JSONArray) {
+                JSONArray a = (JSONArray) node;
+                for (int i = 0; i < a.length(); i++) {
+                    String found = accountFindJsonText(a.get(i), keys);
+                    if (found.length() > 0) return found;
+                }
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private int parseAccountPercent(String s) {
+        if (s == null) return -1;
+        s = s.replace("%", "").trim();
+        try {
+            double d = Double.parseDouble(s);
+            if (d <= 1.0) d *= 100.0;
+            if (d < 0) return -1;
+            if (d > 100) d = 100;
+            return (int) Math.round(d);
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private String accountEnc(String s) {
+        try {
+            if (s == null) s = "";
+            return URLEncoder.encode(s, "UTF-8");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String emptyAccount(String s) {
+        if (s == null || s.trim().length() == 0 || "null".equalsIgnoreCase(s.trim())) return "0";
+        return s.trim();
+    }
+
+
     private void showStorage() {
         LinearLayout box = base("Storage");
         TextView data = small("Loading...");
@@ -1312,6 +1648,150 @@ public class MainActivity extends Activity {
     }
 
 
+
+    private void showAccount() {
+        topBar.setVisibility(View.VISIBLE);
+        bottomNav.setVisibility(View.VISIBLE);
+
+        LinearLayout box = baseNoTitle();
+        box.setPadding(dp(12), dp(10), dp(12), dp(34) + getSafeBottomPadding());
+
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button dash = button("Dashboard", CARD2, TEXT);
+        dash.setTextSize(15);
+        dash.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showHome(); }
+        });
+
+        Button gal = button("Gallery", CARD2, TEXT);
+        gal.setTextSize(15);
+        gal.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showGallery(); }
+        });
+
+        Button upload = button("Upload", CARD2, TEXT);
+        upload.setTextSize(15);
+        upload.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showBackup(); }
+        });
+
+        tabs.addView(dash, new LinearLayout.LayoutParams(0, dp(48), 1));
+        TextView gapA = new TextView(this);
+        tabs.addView(gapA, new LinearLayout.LayoutParams(dp(10), 1));
+        tabs.addView(gal, new LinearLayout.LayoutParams(0, dp(48), 1));
+        TextView gapB = new TextView(this);
+        tabs.addView(gapB, new LinearLayout.LayoutParams(dp(10), 1));
+        tabs.addView(upload, new LinearLayout.LayoutParams(0, dp(48), 1));
+        box.addView(tabs, lp());
+
+        LinearLayout stats = new LinearLayout(this);
+        stats.setOrientation(LinearLayout.HORIZONTAL);
+
+        final TextView storageUsed = accountBigValue("—");
+        final TextView files = accountBigValue("—");
+        final TextView pv = accountBigValue("—");
+
+        stats.addView(accountStatCard(storageUsed, "Storage Used"), new LinearLayout.LayoutParams(0, dp(92), 1));
+        TextView g1 = new TextView(this);
+        stats.addView(g1, new LinearLayout.LayoutParams(dp(10), 1));
+        stats.addView(accountStatCard(files, "Files"), new LinearLayout.LayoutParams(0, dp(92), 1));
+        TextView g2 = new TextView(this);
+        stats.addView(g2, new LinearLayout.LayoutParams(dp(10), 1));
+        stats.addView(accountStatCard(pv, "Photos / Videos"), new LinearLayout.LayoutParams(0, dp(92), 1));
+
+        box.addView(stats, lp());
+
+        LinearLayout zip = accountPanel();
+        TextView zipTitle = accountTitle("ZIP Backup");
+        TextView zipInfo = small("Server creates ZIP in temp storage. It stays available for 18 hours from request time. If laptop/server closes while ZIP is still building, building stops. If ZIP was already ready, download remains after reconnect until expiry.");
+        final ProgressBar zipProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        zipProgress.setMax(100);
+        zipProgress.setProgress(0);
+
+        final TextView zipStatus = small("No ZIP requested yet.");
+
+        Button createZip = button("Create ZIP Backup", Color.rgb(46, 204, 113), Color.BLACK);
+        createZip.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                createZipBackup(zipStatus, zipProgress);
+            }
+        });
+
+        zip.addView(zipTitle);
+        zip.addView(zipInfo, lp());
+        zip.addView(zipProgress, lp());
+        zip.addView(zipStatus, lp());
+        zip.addView(createZip, bigLp());
+        box.addView(zip, lp());
+
+        Button downloadOneByOne = button("Download Files One By One", CARD2, TEXT);
+        downloadOneByOne.setTextSize(15);
+        downloadOneByOne.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                downloadFilesOneByOne();
+            }
+        });
+        box.addView(downloadOneByOne, bigLp());
+
+        LinearLayout security = accountPanel();
+        TextView secTitle = accountTitle("Security");
+
+        final EditText oldPass = accountInput("Current password");
+        oldPass.setInputType(0x00000081);
+
+        final EditText newPass = accountInput("New password");
+        newPass.setInputType(0x00000081);
+
+        Button changePass = button("Change Password", Color.rgb(46, 204, 113), Color.BLACK);
+        changePass.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                changeAccountPassword(oldPass.getText().toString(), newPass.getText().toString());
+            }
+        });
+
+        security.addView(secTitle);
+        security.addView(oldPass, inputLp());
+        security.addView(newPass, inputLp());
+        security.addView(changePass, bigLp());
+        box.addView(security, lp());
+
+        LinearLayout danger = new LinearLayout(this);
+        danger.setOrientation(LinearLayout.VERTICAL);
+        danger.setPadding(dp(16), dp(16), dp(16), dp(16));
+        danger.setBackground(round(Color.rgb(16, 4, 4), dp(16), RED, 1));
+
+        TextView dangerTitle = accountTitle("Danger Zone");
+        dangerTitle.setTextColor(Color.rgb(255, 95, 95));
+
+        TextView dangerText = small("This deletes all your uploaded photos, videos, documents, music and files. Account remains, data goes away. Type DELETE.");
+
+        final EditText confirm = accountInput("Type DELETE");
+        Button delete = button("Delete All My Data", Color.rgb(220, 38, 38), Color.WHITE);
+        delete.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (!"DELETE".equals(confirm.getText().toString().trim())) {
+                    toast("Type DELETE first");
+                    return;
+                }
+                deleteAllMyData();
+            }
+        });
+
+        danger.addView(dangerTitle);
+        danger.addView(dangerText, lp());
+        danger.addView(confirm, inputLp());
+        danger.addView(delete, bigLp());
+        box.addView(danger, lp());
+
+        setScreen(scroll(box));
+
+        loadAccountStats(storageUsed, files, pv);
+        loadZipStatus(zipStatus, zipProgress);
+    }
+
+
     private void showSettings() {
         LinearLayout box = base("Settings");
 
@@ -1729,6 +2209,15 @@ public class MainActivity extends Activity {
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
+
+
+    private int getSafeBottomPadding() {
+        int id = getResources().getIdentifier("navigation_bar_height", "dimen", "android");
+        int nav = 0;
+        if (id > 0) nav = getResources().getDimensionPixelSize(id);
+        return Math.max(dp(18), nav / 2);
+    }
+
 
     private void toast(String s) {
         Toast.makeText(this, s, Toast.LENGTH_LONG).show();
