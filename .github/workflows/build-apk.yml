@@ -1,0 +1,66 @@
+name: Build Family Cloud Native APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Find Android project
+        run: |
+          PROJECT_DIR=$(find . \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs dirname)
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "No settings.gradle found"
+            exit 1
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project dir: $PROJECT_DIR"
+
+      - name: Make Gradle executable
+        run: |
+          cd "$PROJECT_DIR"
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          fi
+
+      - name: Build debug APK
+        run: |
+          cd "$PROJECT_DIR"
+          if [ -f "./gradlew" ]; then
+            ./gradlew clean assembleDebug
+          else
+            echo "No gradlew found. Using system gradle fallback."
+            sudo apt-get update
+            sudo apt-get install -y gradle
+            gradle clean assembleDebug
+          fi
+
+      - name: List APK files
+        run: |
+          find "$PROJECT_DIR" -type f -name "*.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FamilyCloud-Native-Debug-APK
+          path: |
+            **/build/outputs/apk/debug/*.apk
+            **/build/outputs/apk/**/*.apk
