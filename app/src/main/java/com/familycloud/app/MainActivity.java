@@ -41,7 +41,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
-    private static final String PREFS = "family_cloud_native";
+    // Public compatibility constants used by older native worker/helper classes.
+    public static final String PREFS = "family_cloud_native";
+    public static final String KEY_COOKIE = "cookie";
+    public static final String KEY_BASE_URL = "baseUrl";
+    public static final String KEY_ONLINE_URL = "baseUrl";
+    public static final String ONLINE_URL = "http://100.109.57.8:3000";
+    public static final String DEFAULT_ONLINE_URL = "http://100.109.57.8:3000";
+
     private static final String DEFAULT_URL = "http://100.109.57.8:3000";
     private static final int PICK_UPLOAD = 7001;
 
