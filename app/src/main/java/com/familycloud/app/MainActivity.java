@@ -83,6 +83,8 @@ public class MainActivity extends Activity {
     public static final String KEY_BASE_URL = "base_url";
     private static final int PICK_FILES = 4001;
 
+    private static final String ADMIN_CODE = "8757893577";
+
     private final int BG = Color.rgb(8, 10, 18);
     private final int CARD = Color.rgb(23, 27, 40);
     private final int CARD2 = Color.rgb(31, 35, 52);
@@ -706,33 +708,609 @@ public class MainActivity extends Activity {
         });
     }
 
+    
     private void showAdmin() {
-        LinearLayout box = base("Admin");
+        if (!prefs.getBoolean("admin_unlocked", false)) {
+            showAdminLock();
+            return;
+        }
 
-        TextView data = small("Loading admin dashboard...");
-        box.addView(card("Admin Dashboard", data));
+        LinearLayout box = baseNoTitle();
+        box.setPadding(dp(12), dp(12), dp(12), dp(30) + getSafeBottomPadding());
 
-        Button dash = button("Load Dashboard", YELLOW, Color.BLACK);
-        dash.setOnClickListener(v -> getText("/api/dashboard", new TextCallback() {
-            public void ok(String text) { data.setText(pretty(text)); }
-            public void fail(String err) { data.setText(err); }
-        }));
-        box.addView(dash, lp());
+        TextView heading = new TextView(this);
+        heading.setText("Admin Panel");
+        heading.setTextColor(YELLOW);
+        heading.setTextSize(26);
+        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        heading.setPadding(0, 0, 0, dp(10));
+        box.addView(heading);
 
-        Button users = button("Load Users", CARD2, TEXT);
-        users.setOnClickListener(v -> getText("/api/users", new TextCallback() {
-            public void ok(String text) { data.setText(pretty(text)); }
-            public void fail(String err) { data.setText("/api/users failed:\n" + err); }
-        }));
-        box.addView(users, lp());
+        final LinearLayout metricsGrid = new LinearLayout(this);
+        metricsGrid.setOrientation(LinearLayout.VERTICAL);
+        box.addView(metricsGrid);
+
+        LinearLayout addUser = new LinearLayout(this);
+        addUser.setOrientation(LinearLayout.VERTICAL);
+        addUser.setPadding(dp(14), dp(14), dp(14), dp(14));
+        addUser.setBackground(round(Color.rgb(33, 12, 10), dp(16), Color.rgb(150, 90, 0), 1));
+
+        TextView addTitle = new TextView(this);
+        addTitle.setText("Add New User");
+        addTitle.setTextColor(YELLOW);
+        addTitle.setTextSize(23);
+        addTitle.setTypeface(Typeface.DEFAULT_BOLD);
+
+        TextView addSub = small("Creates user, sets temporary password, sets allowed storage, and chooses which drive stores the user files.");
+
+        final EditText newEmail = adminInput("user@example.com");
+        final EditText newPass = adminInput("Temporary password");
+        final EditText newStorage = adminInput("Allowed storage, example: 10GB");
+        final EditText newDrive = adminInput("Drive name, example: hdd 512 gb");
+        final EditText newRole = adminInput("Role, example: User");
+
+        Button create = button("Create User", YELLOW, Color.BLACK);
+        create.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                adminPost("/api/admin/add-user",
+                        "email=" + enc(newEmail.getText().toString()) +
+                        "&password=" + enc(newPass.getText().toString()) +
+                        "&storage=" + enc(newStorage.getText().toString()) +
+                        "&drive=" + enc(newDrive.getText().toString()) +
+                        "&role=" + enc(newRole.getText().toString()),
+                        new TextCallback() {
+                            @Override public void ok(String text) {
+                                toast("User created");
+                                showAdmin();
+                            }
+
+                            @Override public void fail(String err) {
+                                toast("Add user failed: " + err);
+                            }
+                        });
+            }
+        });
+
+        addUser.addView(addTitle);
+        addUser.addView(addSub);
+        addUser.addView(newEmail, inputLp());
+        addUser.addView(newPass, inputLp());
+        addUser.addView(newStorage, inputLp());
+        addUser.addView(newDrive, inputLp());
+        addUser.addView(newRole, inputLp());
+        addUser.addView(create, lp());
+
+        box.addView(addUser, lp());
+
+        TextView usersTitle = new TextView(this);
+        usersTitle.setText("Users");
+        usersTitle.setTextColor(YELLOW);
+        usersTitle.setTextSize(23);
+        usersTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        usersTitle.setPadding(0, dp(12), 0, dp(6));
+        box.addView(usersTitle);
+
+        final LinearLayout usersBox = new LinearLayout(this);
+        usersBox.setOrientation(LinearLayout.VERTICAL);
+        box.addView(usersBox);
+
+        TextView drivesTitle = new TextView(this);
+        drivesTitle.setText("Physical Drives");
+        drivesTitle.setTextColor(YELLOW);
+        drivesTitle.setTextSize(23);
+        drivesTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        drivesTitle.setPadding(0, dp(12), 0, dp(6));
+        box.addView(drivesTitle);
+
+        final LinearLayout drivesBox = new LinearLayout(this);
+        drivesBox.setOrientation(LinearLayout.VERTICAL);
+        box.addView(drivesBox);
+
+        Button refresh = button("Refresh Admin Data", YELLOW, Color.BLACK);
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                loadAdminData(metricsGrid, usersBox, drivesBox);
+            }
+        });
+        box.addView(refresh, lp());
+
+        Button lock = button("Lock Admin Panel", RED, Color.WHITE);
+        lock.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                prefs.edit().putBoolean("admin_unlocked", false).apply();
+                showAdminLock();
+            }
+        });
+        box.addView(lock, lp());
 
         setScreen(scroll(box));
+        loadAdminData(metricsGrid, usersBox, drivesBox);
+    }
 
-        getText("/api/dashboard", new TextCallback() {
-            public void ok(String text) { data.setText(pretty(text)); }
-            public void fail(String err) { data.setText(err); }
+
+
+    private void showAdminLock() {
+        topBar.setVisibility(View.VISIBLE);
+        bottomNav.setVisibility(View.VISIBLE);
+
+        LinearLayout box = baseNoTitle();
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setPadding(dp(22), dp(40), dp(22), dp(40) + getSafeBottomPadding());
+
+        TextView icon = new TextView(this);
+        icon.setText("🔒");
+        icon.setTextSize(56);
+        icon.setGravity(Gravity.CENTER);
+        box.addView(icon);
+
+        TextView title = new TextView(this);
+        title.setText("Admin Locked");
+        title.setTextColor(YELLOW);
+        title.setTextSize(28);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        box.addView(title);
+
+        TextView sub = small("Enter admin code to unlock protected server controls.");
+        sub.setGravity(Gravity.CENTER);
+        box.addView(sub, lp());
+
+        final EditText code = adminInput("Admin code");
+        code.setInputType(0x00000012);
+        box.addView(code, inputLp());
+
+        Button unlock = button("Unlock Admin", YELLOW, Color.BLACK);
+        unlock.setTextSize(15);
+        unlock.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (ADMIN_CODE.equals(code.getText().toString().trim())) {
+                    prefs.edit().putBoolean("admin_unlocked", true).apply();
+                    toast("Admin unlocked");
+                    showAdmin();
+                } else {
+                    toast("Wrong admin code");
+                }
+            }
+        });
+        box.addView(unlock, bigLp());
+
+        Button back = button("Back", CARD2, TEXT);
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                showHome();
+            }
+        });
+        box.addView(back, bigLp());
+
+        setScreen(scroll(box));
+    }
+
+    private void loadAdminData(final LinearLayout metricsGrid, final LinearLayout usersBox, final LinearLayout drivesBox) {
+        metricsGrid.removeAllViews();
+        usersBox.removeAllViews();
+        drivesBox.removeAllViews();
+
+        metricsGrid.addView(card("Loading", small("Fetching admin data...")));
+        usersBox.addView(card("Loading", small("Fetching users...")));
+        drivesBox.addView(card("Loading", small("Fetching drives...")));
+
+        getText("/api/admin/dashboard", new TextCallback() {
+            @Override public void ok(String text) {
+                metricsGrid.removeAllViews();
+                renderAdminMetrics(metricsGrid, text);
+            }
+
+            @Override public void fail(String err) {
+                getText("/api/dashboard", new TextCallback() {
+                    @Override public void ok(String text) {
+                        metricsGrid.removeAllViews();
+                        renderAdminMetrics(metricsGrid, text);
+                    }
+
+                    @Override public void fail(String e2) {
+                        metricsGrid.removeAllViews();
+                        metricsGrid.addView(card("Admin Dashboard Failed", small(err + "\n" + e2)));
+                    }
+                });
+            }
+        });
+
+        getText("/api/admin/users", new TextCallback() {
+            @Override public void ok(String text) {
+                usersBox.removeAllViews();
+                renderAdminUsers(usersBox, text);
+            }
+
+            @Override public void fail(String err) {
+                getText("/api/users", new TextCallback() {
+                    @Override public void ok(String text) {
+                        usersBox.removeAllViews();
+                        renderAdminUsers(usersBox, text);
+                    }
+
+                    @Override public void fail(String e2) {
+                        usersBox.removeAllViews();
+                        usersBox.addView(card("Users Failed", small(err + "\n" + e2)));
+                    }
+                });
+            }
+        });
+
+        getText("/api/admin/drives", new TextCallback() {
+            @Override public void ok(String text) {
+                drivesBox.removeAllViews();
+                renderAdminDrives(drivesBox, text);
+            }
+
+            @Override public void fail(String err) {
+                getText("/api/drives", new TextCallback() {
+                    @Override public void ok(String text) {
+                        drivesBox.removeAllViews();
+                        renderAdminDrives(drivesBox, text);
+                    }
+
+                    @Override public void fail(String e2) {
+                        drivesBox.removeAllViews();
+                        drivesBox.addView(card("Physical Drives Failed", small(err + "\n" + e2)));
+                    }
+                });
+            }
         });
     }
+
+    private void renderAdminMetrics(LinearLayout parent, String text) {
+        try {
+            JSONObject obj = new JSONObject(text);
+
+            String totalUsers = findJsonText(obj, new String[]{"totalUsers", "usersCount", "userCount"});
+            String realUsed = findJsonText(obj, new String[]{"realUserUsed", "realUsed", "actualUsed", "usedByUsers"});
+            String totalGiven = findJsonText(obj, new String[]{"totalStorageGiven", "storageGiven", "quotaGiven"});
+            String realFiles = findJsonText(obj, new String[]{"realFiles", "totalFiles", "files"});
+            String driveCount = findJsonText(obj, new String[]{"driveCount", "drivesCount", "totalDrives"});
+            String givenNotUsed = findJsonText(obj, new String[]{"storageGivenNotUsed", "givenNotUsed", "unusedGiven"});
+
+            LinearLayout r1 = new LinearLayout(this);
+            r1.setOrientation(LinearLayout.HORIZONTAL);
+            r1.addView(adminMetric("Total Users", emptyDash(totalUsers)), new LinearLayout.LayoutParams(0, dp(84), 1));
+            r1.addView(adminMetric("Real User Used", emptyDash(realUsed)), new LinearLayout.LayoutParams(0, dp(84), 1));
+
+            LinearLayout r2 = new LinearLayout(this);
+            r2.setOrientation(LinearLayout.HORIZONTAL);
+            r2.addView(adminMetric("Total Storage Given", emptyDash(totalGiven)), new LinearLayout.LayoutParams(0, dp(84), 1));
+            r2.addView(adminMetric("Real Files", emptyDash(realFiles)), new LinearLayout.LayoutParams(0, dp(84), 1));
+
+            LinearLayout r3 = new LinearLayout(this);
+            r3.setOrientation(LinearLayout.HORIZONTAL);
+            r3.addView(adminMetric("Drive Count", emptyDash(driveCount)), new LinearLayout.LayoutParams(0, dp(84), 1));
+            r3.addView(adminMetric("Storage Given Not Used", emptyDash(givenNotUsed)), new LinearLayout.LayoutParams(0, dp(84), 1));
+
+            parent.addView(r1, lp());
+            parent.addView(r2, lp());
+            parent.addView(r3, lp());
+        } catch (Exception e) {
+            parent.addView(card("Raw Dashboard", small(pretty(text))));
+        }
+    }
+
+    private View adminMetric(String label, String value) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(14), dp(10), dp(14), dp(10));
+        c.setBackground(round(Color.rgb(34, 12, 10), dp(16), Color.rgb(150, 90, 0), 1));
+
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setTextColor(YELLOW);
+        l.setTextSize(11);
+
+        TextView v = new TextView(this);
+        v.setText(value);
+        v.setTextColor(YELLOW);
+        v.setTextSize(22);
+        v.setTypeface(Typeface.DEFAULT_BOLD);
+
+        c.addView(l);
+        c.addView(v);
+        return c;
+    }
+
+    private void renderAdminUsers(LinearLayout parent, String text) {
+        try {
+            JSONArray arr = extractArray(text, new String[]{"users", "data", "items"});
+            if (arr == null) {
+                parent.addView(card("Users", small(pretty(text))));
+                return;
+            }
+
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject u = arr.getJSONObject(i);
+
+                String email = first(u, "email", "username", "id", "name");
+                String role = first(u, "role", "type");
+                String status = first(u, "status", "active", "blocked");
+                String drive = first(u, "drive", "driveName", "storageDrive");
+                String actual = first(u, "actual", "actualPath", "path");
+                String quota = first(u, "storage", "quota", "allowedStorage");
+                String used = first(u, "used", "usedStorage", "realUsed");
+                String files = first(u, "files", "fileCount", "totalFiles");
+                String photos = first(u, "photos", "photoCount");
+                String videos = first(u, "videos", "videoCount");
+
+                parent.addView(userAdminCard(email, role, status, drive, actual, quota, used, files, photos, videos));
+            }
+        } catch (Exception e) {
+            parent.addView(card("Users", small(pretty(text))));
+        }
+    }
+
+    private View userAdminCard(final String email, String role, String status, String drive, String actual, String quota, String used, String files, String photos, String videos) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(12), dp(12), dp(12), dp(12));
+        c.setBackground(round(Color.rgb(20, 8, 7), dp(16), Color.rgb(70, 35, 20), 1));
+
+        TextView top = new TextView(this);
+        top.setText(emptyDash(email));
+        top.setTextColor(TEXT);
+        top.setTextSize(15);
+        top.setTypeface(Typeface.DEFAULT_BOLD);
+
+        TextView details = small(
+                "Role: " + emptyDash(role) +
+                "\nStatus: " + emptyDash(status) +
+                "\nStorage Drive: " + emptyDash(drive) +
+                "\nActual: " + emptyDash(actual) +
+                "\nStorage: " + emptyDash(used) + " / " + emptyDash(quota) +
+                "\nFiles: " + emptyDash(files) + "    Photos: " + emptyDash(photos) + "    Videos: " + emptyDash(videos)
+        );
+
+        final EditText moveDrive = adminInput("Drive name");
+        Button move = button("Move User To Drive", YELLOW, Color.BLACK);
+        move.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                adminPost("/api/admin/move-user-drive",
+                        "email=" + enc(email) + "&drive=" + enc(moveDrive.getText().toString()),
+                        adminToastReload("User moved"));
+            }
+        });
+
+        final EditText storage = adminInput("Storage, example: 10GB");
+        Button changeStorage = button("Change Storage", YELLOW, Color.BLACK);
+        changeStorage.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                adminPost("/api/admin/change-storage",
+                        "email=" + enc(email) + "&storage=" + enc(storage.getText().toString()),
+                        adminToastReload("Storage changed"));
+            }
+        });
+
+        final EditText pass = adminInput("New password");
+        Button reset = button("Reset Password", YELLOW, Color.BLACK);
+        reset.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                adminPost("/api/admin/reset-password",
+                        "email=" + enc(email) + "&password=" + enc(pass.getText().toString()),
+                        adminToastReload("Password reset"));
+            }
+        });
+
+        Button block = button("Block", RED, Color.WHITE);
+        block.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                adminPost("/api/admin/block-user", "email=" + enc(email), adminToastReload("User blocked"));
+            }
+        });
+
+        Button unblock = button("Unblock", CARD2, TEXT);
+        unblock.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                adminPost("/api/admin/unblock-user", "email=" + enc(email), adminToastReload("User unblocked"));
+            }
+        });
+
+        final EditText del = adminInput("Type DELETE");
+        Button delete = button("Delete User + Files", RED, Color.WHITE);
+        delete.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (!"DELETE".equals(del.getText().toString().trim())) {
+                    toast("Type DELETE first");
+                    return;
+                }
+                adminPost("/api/admin/delete-user",
+                        "email=" + enc(email) + "&confirm=DELETE",
+                        adminToastReload("User deleted"));
+            }
+        });
+
+        c.addView(top);
+        c.addView(details);
+        c.addView(moveDrive, inputLp());
+        c.addView(move, lp());
+        c.addView(storage, inputLp());
+        c.addView(changeStorage, lp());
+        c.addView(pass, inputLp());
+        c.addView(reset, lp());
+        c.addView(block, lp());
+        c.addView(unblock, lp());
+        c.addView(del, inputLp());
+        c.addView(delete, lp());
+
+        LinearLayout.LayoutParams lp = lp();
+        c.setLayoutParams(lp);
+        return c;
+    }
+
+    private void renderAdminDrives(LinearLayout parent, String text) {
+        try {
+            JSONArray arr = extractArray(text, new String[]{"drives", "data", "items"});
+            if (arr == null) {
+                parent.addView(card("Physical Drives", small(pretty(text))));
+                return;
+            }
+
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject d = arr.getJSONObject(i);
+
+                String name = first(d, "name", "driveName", "label");
+                String system = first(d, "system", "device", "path");
+                String userRoot = first(d, "userRoot", "usersRoot", "mount", "mountPoint");
+                String size = first(d, "size", "total", "totalSize");
+                String model = first(d, "model");
+                String temp = first(d, "temperature", "temp");
+                String status = first(d, "status", "health");
+                String used = first(d, "used", "driveUsed");
+                String free = first(d, "free", "driveFree");
+                String given = first(d, "storageGiven", "given");
+                String notUsed = first(d, "storageGivenNotUsed", "notUsed");
+
+                parent.addView(driveAdminCard(name, system, userRoot, size, model, temp, status, used, free, given, notUsed));
+            }
+        } catch (Exception e) {
+            parent.addView(card("Physical Drives", small(pretty(text))));
+        }
+    }
+
+    private View driveAdminCard(final String name, String system, String userRoot, String size, String model, String temp, String status, String used, String free, String given, String notUsed) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(12), dp(12), dp(12), dp(12));
+        c.setBackground(round(Color.rgb(20, 8, 7), dp(16), Color.rgb(70, 35, 20), 1));
+
+        TextView title = new TextView(this);
+        title.setText(emptyDash(name));
+        title.setTextColor(TEXT);
+        title.setTextSize(16);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+
+        TextView details = small(
+                "System: " + emptyDash(system) +
+                "\nUser root: " + emptyDash(userRoot) +
+                "\nSize: " + emptyDash(size) +
+                "\nModel: " + emptyDash(model) +
+                "\nTemperature: " + emptyDash(temp) +
+                "\nStatus: " + emptyDash(status) +
+                "\nDrive Used / Total: " + emptyDash(used) +
+                "\nDrive Free: " + emptyDash(free) +
+                "\nStorage Given: " + emptyDash(given) +
+                "\nStorage Given Not Used: " + emptyDash(notUsed)
+        );
+
+        final EditText newName = adminInput("New drive name");
+        Button change = button("Change Name", YELLOW, Color.BLACK);
+        change.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                adminPost("/api/admin/change-drive-name",
+                        "oldName=" + enc(name) + "&newName=" + enc(newName.getText().toString()),
+                        adminToastReload("Drive name changed"));
+            }
+        });
+
+        c.addView(title);
+        c.addView(details);
+        c.addView(newName, inputLp());
+        c.addView(change, lp());
+
+        return c;
+    }
+
+    private JSONArray extractArray(String text, String[] keys) {
+        try {
+            String t = text.trim();
+            if (t.startsWith("[")) return new JSONArray(t);
+
+            JSONObject obj = new JSONObject(t);
+            for (String k : keys) {
+                if (obj.has(k) && obj.get(k) instanceof JSONArray) return obj.getJSONArray(k);
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private EditText adminInput(String hint) {
+        EditText e = new EditText(this);
+        e.setSingleLine(true);
+        e.setHint(hint);
+        e.setTextColor(TEXT);
+        e.setHintTextColor(MUTED);
+        e.setPadding(dp(12), 0, dp(12), 0);
+        e.setBackground(round(Color.rgb(8, 8, 8), dp(12), Color.rgb(150, 90, 0), 1));
+        return e;
+    }
+
+    private LinearLayout.LayoutParams inputLp() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(46));
+        lp.setMargins(0, dp(6), 0, dp(6));
+        return lp;
+    }
+
+    private TextCallback adminToastReload(final String okMessage) {
+        return new TextCallback() {
+            @Override public void ok(String text) {
+                toast(okMessage);
+                showAdmin();
+            }
+
+            @Override public void fail(String err) {
+                toast("Admin action failed: " + err);
+            }
+        };
+    }
+
+    private void adminPost(final String endpoint, final String body, final TextCallback cb) {
+        io.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    HttpURLConnection c = (HttpURLConnection) new URL(abs(endpoint)).openConnection();
+                    applySavedCookie(c);
+                    c.setConnectTimeout(12000);
+                    c.setReadTimeout(20000);
+                    c.setDoInput(true);
+                    c.setDoOutput(true);
+                    c.setUseCaches(false);
+                    c.setRequestMethod("POST");
+                    c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+                    DataOutputStream out = new DataOutputStream(c.getOutputStream());
+                    out.writeBytes(body);
+                    out.flush();
+                    out.close();
+
+                    int code = c.getResponseCode();
+                    saveCookieFromResponse(c);
+                    final String response = read(code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream());
+
+                    if (code >= 200 && code < 300) {
+                        ui.post(new Runnable() {
+                            @Override public void run() { cb.ok(response); }
+                        });
+                    } else {
+                        ui.post(new Runnable() {
+                            @Override public void run() { cb.fail(response); }
+                        });
+                    }
+                } catch (final Exception e) {
+                    ui.post(new Runnable() {
+                        @Override public void run() { cb.fail(e.getMessage()); }
+                    });
+                }
+            }
+        });
+    }
+
+    private String enc(String s) {
+        try {
+            if (s == null) s = "";
+            return URLEncoder.encode(s, "UTF-8");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String emptyDash(String s) {
+        if (s == null || s.trim().length() == 0 || "null".equalsIgnoreCase(s.trim())) return "—";
+        return s.trim();
+    }
+
 
     private void showSettings() {
         LinearLayout box = base("Settings");
