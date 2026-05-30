@@ -1,6 +1,5 @@
 package com.familycloud.app;
 
-import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
@@ -58,6 +57,21 @@ public class MainActivity extends Activity {
 
     public static final String PREFS = "family_cloud_prefs";
 
+    // Compatibility constants for old BackupWorker / FreeSpaceManager code.
+    public static final String PREF_SERVER_URL = "base_url";
+    public static final String SERVER_URL = "base_url";
+    public static final String PREF_BASE_URL = "base_url";
+    public static final String KEY_SERVER_URL = "base_url";
+    public static final String KEY_BASE_URL_PUBLIC = "base_url";
+    public static final String PREF_EMAIL = "email";
+    public static final String KEY_EMAIL = "email";
+    public static final String PREF_USER_EMAIL = "email";
+    public static final String PREF_LOCAL_URL = "local_url";
+    public static final String PREF_ONLINE_URL = "online_url";
+    public static final String PREF_MODE = "mode";
+    public static final String MODE_LOCAL = "local";
+    public static final String MODE_ONLINE = "online";
+
     private static final String KEY_BASE_URL = "base_url";
     private static final int PICK_FILES = 4001;
 
@@ -107,13 +121,13 @@ public class MainActivity extends Activity {
     private void requestBasicPermissions() {
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(new String[]{
-                    Manifest.permission.READ_MEDIA_IMAGES,
-                    Manifest.permission.READ_MEDIA_VIDEO,
-                    Manifest.permission.POST_NOTIFICATIONS
+                    "android.permission.READ_MEDIA_IMAGES",
+                    "android.permission.READ_MEDIA_VIDEO",
+                    "android.permission.POST_NOTIFICATIONS"
             }, 11);
         } else if (Build.VERSION.SDK_INT >= 23) {
-            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 10);
+            if (checkSelfPermission("android.permission.READ_EXTERNAL_STORAGE") != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{"android.permission.READ_EXTERNAL_STORAGE"}, 10);
             }
         }
     }
