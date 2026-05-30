@@ -24,40 +24,48 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Set up modern Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
       - name: Find Android project
         run: |
           PROJECT_DIR=$(find . \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs dirname)
           if [ -z "$PROJECT_DIR" ]; then
-            echo "No settings.gradle found"
+            echo "No Android Gradle project found"
             exit 1
           fi
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Project dir: $PROJECT_DIR"
 
-      - name: Make Gradle executable
+      - name: Show Gradle version
         run: |
           cd "$PROJECT_DIR"
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
+            ./gradlew --version
+          else
+            gradle --version
           fi
 
       - name: Build debug APK
         run: |
           cd "$PROJECT_DIR"
           if [ -f "./gradlew" ]; then
-            ./gradlew clean assembleDebug
+            chmod +x ./gradlew
+            ./gradlew clean assembleDebug --stacktrace
           else
-            echo "No gradlew found. Using system gradle fallback."
-            sudo apt-get update
-            sudo apt-get install -y gradle
-            gradle clean assembleDebug
+            gradle clean assembleDebug --stacktrace
           fi
 
       - name: List APK files
+        if: always()
         run: |
-          find "$PROJECT_DIR" -type f -name "*.apk"
+          find "$PROJECT_DIR" -type f -name "*.apk" || true
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: FamilyCloud-Native-Debug-APK
