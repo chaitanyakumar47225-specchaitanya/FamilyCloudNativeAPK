@@ -1,5 +1,13 @@
 package com.familycloud.app;
 
+import java.util.List;
+
+import java.util.Comparator;
+
+import java.util.ArrayList;
+
+import java.io.File;
+
 import java.io.OutputStream;
 
 import java.io.InputStream;
@@ -75,6 +83,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+    private String email = "";
+
     private static final String ADMIN_CODE = "8757893577";
     private int currentPage = 1;
     private String currentType = "all";
@@ -176,7 +186,14 @@ protected void onCreate(Bundle savedInstanceState) {
         return b;
     }
 
-    private EditText input(String hint, boolean pass) {
+    
+private EditText input(String hint, String value) {
+    EditText e = input(hint, false);
+    e.setText(value == null ? "" : value);
+    return e;
+}
+
+private EditText input(String hint, boolean pass) {
         EditText e = new EditText(this);
         e.setHint(hint);
         e.setHintTextColor(Color.GRAY);
@@ -871,7 +888,12 @@ private JSONObject getJson(String path) throws Exception {
         return p;
     }
 
-    private void showGallery(int page, String type) {
+    
+private void showGallery() {
+    showGallery(1, "all");
+}
+
+private void showGallery(int page, String type) {
     currentPage = Math.max(1, page);
     currentType = type == null ? "all" : type;
 
@@ -2288,6 +2310,49 @@ private void showAdmin() {
     @Override public void onBackPressed() {
         showDashboard();
     }
+
+
+private void trimCacheAsync() {
+    new Thread(() -> {
+        try {
+            trimCacheFolder(getCacheDir(), 700L * 1024L * 1024L);
+        } catch (Exception ignored) {}
+    }).start();
+}
+
+private void trimCacheFolder(File rootFile, long maxBytes) {
+    if (rootFile == null || !rootFile.exists()) return;
+
+    List<File> files = new ArrayList<>();
+    collectCacheFiles(rootFile, files);
+
+    long total = 0;
+    for (File f : files) total += f.length();
+
+    if (total <= maxBytes) return;
+
+    files.sort(Comparator.comparingLong(File::lastModified));
+
+    for (File f : files) {
+        if (total <= maxBytes) break;
+        long size = f.length();
+        if (f.delete()) total -= size;
+    }
+}
+
+private void collectCacheFiles(File f, List<File> out) {
+    if (f == null || !f.exists()) return;
+
+    if (f.isFile()) {
+        out.add(f);
+        return;
+    }
+
+    File[] kids = f.listFiles();
+    if (kids != null) {
+        for (File k : kids) collectCacheFiles(k, out);
+    }
+}
 
 private void showModePicker() {
     base("Choose Server");
