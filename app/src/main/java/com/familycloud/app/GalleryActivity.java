@@ -66,6 +66,8 @@ public class GalleryActivity extends Activity {
     private TextView pageTextTop;
     private TextView pageTextBottom;
     private ProgressBar loadingBar;
+    private TextView startupStatus;
+    private ProgressBar startupProgress;
 
     private Button floatingSelect;
     private LinearLayout selectBar;
@@ -108,12 +110,141 @@ public class GalleryActivity extends Activity {
         cacheRoot = new File(getCacheDir(), "sri_ladli_gallery_cache");
         if (!cacheRoot.exists()) cacheRoot.mkdirs();
 
+        showStartupCacheScreen();
+        cacheFirstTwoPagesBeforeOpen();}
+
+    
+private void showStartupCacheScreen() {
+    getWindow().setNavigationBarColor(Color.BLACK);
+    getWindow().setStatusBarColor(Color.BLACK);
+
+    LinearLayout screen = new LinearLayout(this);
+    screen.setOrientation(LinearLayout.VERTICAL);
+    screen.setGravity(Gravity.CENTER);
+    screen.setPadding(dp(22), dp(22), dp(22), dp(90));
+    screen.setBackgroundColor(Color.rgb(4, 4, 4));
+
+    TextView title = text("SRI LADLI Gallery", 28, Color.rgb(255, 196, 0));
+    title.setTypeface(Typeface.DEFAULT_BOLD);
+    title.setGravity(Gravity.CENTER);
+
+    startupStatus = text("Checking first 2 pages cache...", 16, Color.WHITE);
+    startupStatus.setGravity(Gravity.CENTER);
+
+    startupProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+    startupProgress.setMax(100);
+    startupProgress.setProgress(0);
+
+    TextView note = text("First open may take time. After cache is ready, gallery opens faster.", 13, Color.LTGRAY);
+    note.setGravity(Gravity.CENTER);
+
+    screen.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    screen.addView(startupProgress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(14)));
+    screen.addView(startupStatus, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    screen.addView(note, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+    setContentView(screen);
+}
+
+private void setStartupProgress(int pct, String msg) {
+    runOnUiThread(() -> {
+        if (startupProgress != null) startupProgress.setProgress(Math.max(0, Math.min(100, pct)));
+        if (startupStatus != null && msg != null) startupStatus.setText(msg);
+    });
+}
+
+private void cacheFirstTwoPagesBeforeOpen() {
+    new Thread(() -> {
+        try {
+            setStartupProgress(3, "Loading file list for first 2 pages...");
+
+            ArrayList<GalleryItem> warmItems = new ArrayList<>();
+
+            for (int warmPage = 1; warmPage <= 2; warmPage++) {
+                JSONObject data = get("/api/native/files?page=" + warmPage + "&limit=" + PAGE_LIMIT + "&type=all");
+                JSONArray arr = data.optJSONArray("items");
+                if (arr == null) arr = data.optJSONArray("files");
+                if (arr == null) continue;
+
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject o = arr.getJSONObject(i);
+
+                    GalleryItem item = new GalleryItem();
+                    item.name = o.optString("name", o.optString("filename", "file"));
+                    item.folder = o.optString("folder", o.optString("path", ""));
+                    item.size = o.optLong("size", 0);
+                    item.mime = o.optString("mime", o.optString("mimetype", guessMime(item.name)));
+                    item.kind = detectKind(item.name, item.mime, o.optString("kind", o.optString("type", "")));
+                    item.key = item.folder + "/" + item.name;
+                    item.pageNumber = warmPage;
+
+                    warmItems.add(item);
+                }
+            }
+
+            if (warmItems.isEmpty()) {
+                setStartupProgress(100, "No first-page files found. Opening gallery...");
+                openGalleryNow();
+                return;
+            }
+
+            if (areFirstTwoPagesCached(warmItems)) {
+                setStartupProgress(100, "First 2 pages already cached. Opening gallery...");
+                openGalleryNow();
+                return;
+            }
+
+            final int total = Math.max(1, warmItems.size());
+            int[] done = new int[]{0};
+
+            for (GalleryItem item : warmItems) {
+                try {
+                    ensureCached(item, item.pageNumber, pctForFile -> {
+                        int global = (int) Math.min(99, ((done[0] * 100.0) + pctForFile) / total);
+                        setStartupProgress(global, "Building first 2 pages cache: " + done[0] + "/" + total + " · " + global + "%");
+                    });
+                } catch (Exception ignored) {}
+
+                done[0]++;
+                int globalDone = (int) Math.min(99, (done[0] * 100.0) / total);
+                setStartupProgress(globalDone, "Building first 2 pages cache: " + done[0] + "/" + total + " · " + globalDone + "%");
+            }
+
+            trimCacheIfNeeded();
+
+            setStartupProgress(100, "First 2 pages cache ready. Opening gallery...");
+            Thread.sleep(500);
+            openGalleryNow();
+        } catch (Exception e) {
+            setStartupProgress(0, "Cache check failed. Opening gallery anyway...");
+            try { Thread.sleep(700); } catch (Exception ignored) {}
+            openGalleryNow();
+        }
+    }).start();
+}
+
+private boolean areFirstTwoPagesCached(ArrayList<GalleryItem> checkItems) {
+    try {
+        for (GalleryItem item : checkItems) {
+            File dir = new File(cacheRoot, "page_" + item.pageNumber);
+            File out = new File(dir, safeFile(item.key));
+            if (!out.exists() || out.length() <= 0) return false;
+        }
+        return true;
+    } catch (Exception e) {
+        return false;
+    }
+}
+
+private void openGalleryNow() {
+    runOnUiThread(() -> {
         buildPage();
         loadPage(1, "all", null);
-        new android.os.Handler(getMainLooper()).postDelayed(() -> warmFirstTwoPagesCache(), 1500);
-    }
+    });
+}
 
-    private void buildPage() {
+
+private void buildPage() {
         FrameLayout frame = new FrameLayout(this);
 
         LinearLayout pageRoot = new LinearLayout(this);
