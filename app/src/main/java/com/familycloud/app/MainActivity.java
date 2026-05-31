@@ -1,5 +1,25 @@
 package com.familycloud.app;
 
+import java.io.OutputStream;
+
+import java.io.InputStream;
+
+import java.io.ByteArrayOutputStream;
+
+import android.widget.EditText;
+
+import android.widget.Button;
+
+import android.widget.TextView;
+
+import android.widget.LinearLayout;
+
+import android.widget.ScrollView;
+
+import android.view.ViewGroup;
+
+import android.graphics.drawable.GradientDrawable;
+
 import android.graphics.RectF;
 
 import android.graphics.Paint;
@@ -55,6 +75,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+    private static final String ADMIN_CODE = "8757893577";
+    private int currentPage = 1;
+    private String currentType = "all";
+
     private String token = "";
 
     public static final String KEY_TOKEN = "token";
@@ -2321,5 +2345,196 @@ private void showLogin(String suggestedUrl, String mode) {
     root.addView(login);
     root.addView(back);
 }
+
+
+// FC_COMPAT_BRIDGE_START
+
+private GradientDrawable bg(int fill, int stroke, int radius) {
+    GradientDrawable g = new GradientDrawable();
+    g.setColor(fill);
+    g.setCornerRadius(radius);
+    g.setStroke(dp(1), stroke);
+    return g;
+}
+
+
+private TextView text(String value, int size, int color) {
+    TextView t = new TextView(this);
+    t.setText(value == null ? "" : value);
+    t.setTextSize(size);
+    t.setTextColor(color);
+    t.setPadding(dp(8), dp(5), dp(8), dp(5));
+    return t;
+}
+
+
+private Button button(String label) {
+    Button b = new Button(this);
+    b.setText(label == null ? "" : label);
+    b.setAllCaps(false);
+    b.setTextColor(Color.BLACK);
+    b.setTextSize(14);
+    b.setMinHeight(dp(46));
+    b.setBackground(bg(Color.rgb(255, 196, 0), Color.rgb(255, 196, 0), dp(12)));
+    return b;
+}
+
+
+private void base(String title) {
+    ScrollView scroll = new ScrollView(this);
+
+    root = new LinearLayout(this);
+    root.setOrientation(LinearLayout.VERTICAL);
+    root.setPadding(dp(12), dp(12), dp(12), dp(18));
+    root.setBackgroundColor(Color.rgb(5, 5, 5));
+
+    scroll.addView(root);
+    setContentView(scroll);
+
+    root.addView(text("☁ Family Cloud · " + (title == null ? "" : title), 24, Color.WHITE));
+}
+
+
+private void nav() {
+    LinearLayout row1 = new LinearLayout(this);
+    row1.setOrientation(LinearLayout.HORIZONTAL);
+
+    LinearLayout row2 = new LinearLayout(this);
+    row2.setOrientation(LinearLayout.HORIZONTAL);
+
+    Button home = button("Home");
+    Button gallery = button("Gallery");
+    Button upload = button("Upload");
+    Button sync = button("Sync");
+    Button account = button("Account");
+    Button admin = button("Admin");
+    Button logout = button("Logout");
+
+    home.setOnClickListener(v -> showDashboard());
+    gallery.setOnClickListener(v -> showGallery(1, "all"));
+    upload.setOnClickListener(v -> showUpload());
+    sync.setOnClickListener(v -> startActivity(new Intent(this, BackupActivity.class)));
+    account.setOnClickListener(v -> showAccount());
+    admin.setOnClickListener(v -> showAdminLock());
+    logout.setOnClickListener(v -> logout());
+
+    for (Button b : new Button[]{home, gallery, upload, sync}) {
+        row1.addView(b, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+    }
+
+    for (Button b : new Button[]{account, admin, logout}) {
+        row2.addView(b, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+    }
+
+    root.addView(row1);
+    root.addView(row2);
+}
+
+
+private String readText(InputStream is) throws Exception {
+    if (is == null) return "";
+
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    byte[] buf = new byte[8192];
+    int n;
+
+    while ((n = is.read(buf)) != -1) {
+        out.write(buf, 0, n);
+    }
+
+    return out.toString("UTF-8");
+}
+
+
+private JSONObject get(String endpoint) throws Exception {
+    URL u = new URL(baseUrl + endpoint);
+    HttpURLConnection c = (HttpURLConnection) u.openConnection();
+
+    c.setRequestProperty("X-FC-Token", token);
+    c.setConnectTimeout(15000);
+    c.setReadTimeout(180000);
+
+    int code = c.getResponseCode();
+    String body = readText(code >= 400 ? c.getErrorStream() : c.getInputStream());
+
+    if (code < 200 || code >= 300) {
+        throw new Exception(body.length() > 240 ? body.substring(0, 240) : body);
+    }
+
+    return new JSONObject(body);
+}
+
+
+private JSONObject post(String endpoint, JSONObject body, boolean auth) throws Exception {
+    URL u = new URL(baseUrl + endpoint);
+    HttpURLConnection c = (HttpURLConnection) u.openConnection();
+
+    c.setRequestMethod("POST");
+    c.setDoOutput(true);
+    c.setConnectTimeout(15000);
+    c.setReadTimeout(180000);
+    c.setRequestProperty("Content-Type", "application/json");
+
+    if (auth) {
+        c.setRequestProperty("X-FC-Token", token);
+    }
+
+    try (OutputStream os = c.getOutputStream()) {
+        os.write(body.toString().getBytes("UTF-8"));
+    }
+
+    int code = c.getResponseCode();
+    String text = readText(code >= 400 ? c.getErrorStream() : c.getInputStream());
+
+    if (code < 200 || code >= 300) {
+        throw new Exception(text.length() > 240 ? text.substring(0, 240) : text);
+    }
+
+    return new JSONObject(text);
+}
+
+
+private void openNative(JSONObject item) {
+    try {
+        openLink(fileUrl(item));
+    } catch (Exception e) {
+        toast("Open failed: " + e.getMessage());
+    }
+}
+
+
+private void shareNative(JSONObject item) {
+    try {
+        Intent i = new Intent(Intent.ACTION_SEND);
+        i.setType("text/plain");
+        i.putExtra(Intent.EXTRA_TEXT, fileUrl(item));
+        startActivity(Intent.createChooser(i, "Share file link"));
+    } catch (Exception e) {
+        toast("Share failed: " + e.getMessage());
+    }
+}
+
+
+private void deleteFile(JSONObject item) {
+    new Thread(() -> {
+        try {
+            JSONObject b = new JSONObject();
+            b.put("folder", item.optString("folder"));
+            b.put("name", item.optString("name"));
+
+            JSONObject r = post("/api/native/delete", b, true);
+            if (!r.optBoolean("ok")) {
+                throw new Exception(r.optString("error", "delete failed"));
+            }
+
+            toast("Deleted");
+            runOnUiThread(() -> showGallery(currentPage, currentType));
+        } catch (Exception e) {
+            toast("Delete failed: " + e.getMessage());
+        }
+    }).start();
+}
+
+// FC_COMPAT_BRIDGE_END
 
 }
