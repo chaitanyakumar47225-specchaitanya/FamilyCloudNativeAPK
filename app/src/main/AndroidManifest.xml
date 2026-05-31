@@ -4,14 +4,19 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 
-    <application
+        <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+<application
         android:theme="@style/AppTheme"
-        android:label="Family Cloud"
+        android:label="@string/app_name"
         android:usesCleartextTraffic="true"
         android:resizeableActivity="true"
         android:allowBackup="true"
-        android:icon="@drawable/ic_launcher"
-        android:roundIcon="@drawable/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
+        <activity android:name=".GalleryActivity" android:exported="false" />
+        <activity android:name=".UploadActivity" android:exported="false" />
+        <activity android:name=".AccountActivity" android:exported="false" />
+        <activity android:name=".AdminActivity" android:exported="false" />
 
         <activity
             android:name=".BackupActivity"
