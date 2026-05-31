@@ -118,7 +118,7 @@ public class GalleryActivity extends Activity {
         loadingBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         loadingBar.setMax(100);
         loadingBar.setProgress(0);
-        pageRoot.addView(loadingBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)));
+        pageRoot.addView(loadingBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(12)));
 
         status = text("Loading gallery...", 14, Color.LTGRAY);
         status.setGravity(Gravity.CENTER);
@@ -846,7 +846,7 @@ public class GalleryActivity extends Activity {
                     if (finalTotal > 0) pct = (int) Math.min(100, (current * 100) / finalTotal);
                     else pct = (int) Math.min(100, (idx * 100.0) / count);
 
-                    setProgress(pct, "Caching page " + pageNumber + ": " + pct + "%");
+                    setProgress(pct, "Caching page " + pageNumber + " · " + idx + "/" + count + " · " + pct + "%");
                 });
 
                 done[0] += Math.max(0, item.size);

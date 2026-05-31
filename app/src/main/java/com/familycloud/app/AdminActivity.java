@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -99,9 +100,9 @@ public class AdminActivity extends Activity {
 
         new Thread(() -> {
             try {
-                JSONObject overview = get("/api/native/admin/overview?code=" + enc(adminCode));
-                JSONObject usersObj = get("/api/native/admin/users-full?code=" + enc(adminCode));
-                JSONObject drivesObj = get("/api/native/admin/drives-full?code=" + enc(adminCode));
+                JSONObject overview = get("/api/native/admin/overview-v2?code=" + enc(adminCode));
+                JSONObject usersObj = get("/api/native/admin/users-full-v2?code=" + enc(adminCode));
+                JSONObject drivesObj = get("/api/native/admin/drives-full-v2?code=" + enc(adminCode));
 
                 users = usersObj.optJSONArray("users");
                 drives = drivesObj.optJSONArray("drives");
@@ -134,6 +135,7 @@ public class AdminActivity extends Activity {
 
         LinearLayout overviewCard = card();
         overviewCard.addView(text("Total users: " + overview.optInt("totalUsers"), 16, Color.WHITE));
+        overviewCard.addView(text("Connected devices: " + overview.optInt("connectedDeviceCount", overview.optInt("deviceCount", 0)), 16, Color.rgb(255, 196, 0)));
         overviewCard.addView(text("Storage used by users: " + overview.optString("storageUsedText"), 16, Color.WHITE));
         overviewCard.addView(text("Storage given to users: " + overview.optString("storageGivenText"), 16, Color.WHITE));
         overviewCard.addView(text("Storage given but not used: " + overview.optString("storageGivenNotUsedText"), 16, Color.rgb(255, 196, 0)));
@@ -177,7 +179,7 @@ public class AdminActivity extends Activity {
                 b.put("allowedGB", storage.getText().toString());
                 b.put("driveId", selectedDriveId(addDriveSpinner));
                 b.put("userType", addTypeSpinner.getSelectedItem().toString());
-                postAsync("/api/native/admin/add-user-full", b, "User added");
+                postAsync("/api/native/admin/add-user-full-v2", b, "User added");
             } catch (Exception e) {
                 toast(e.getMessage());
             }
@@ -243,7 +245,7 @@ public class AdminActivity extends Activity {
                     b.put("allowedGB", newStorage.getText().toString());
                     b.put("userType", editTypeSpinner.getSelectedItem().toString());
                     b.put("status", statusSpinner.getSelectedItem().toString());
-                    postAsync("/api/native/admin/update-user-full", b, "User updated");
+                    postAsync("/api/native/admin/update-user-full-v2", b, "User updated");
                 } catch (Exception e) {
                     toast(e.getMessage());
                 }
@@ -256,7 +258,7 @@ public class AdminActivity extends Activity {
                     b.put("code", adminCode);
                     b.put("email", u.optString("email"));
                     b.put("driveId", selectedDriveId(moveDriveSpinner));
-                    postAsync("/api/native/admin/move-user-full", b, "User moved with files");
+                    postAsync("/api/native/admin/move-user-full-v2", b, "User moved with files");
                 } catch (Exception e) {
                     toast(e.getMessage());
                 }
@@ -313,7 +315,7 @@ public class AdminActivity extends Activity {
                     b.put("code", adminCode);
                     b.put("driveId", d.optString("id"));
                     b.put("nickname", nick.getText().toString().trim());
-                    postAsync("/api/native/admin/drive-nickname-full", b, "Drive nickname saved");
+                    postAsync("/api/native/admin/drive-nickname-full-v2", b, "Drive nickname saved");
                 } catch (Exception e) {
                     toast(e.getMessage());
                 }
@@ -354,7 +356,7 @@ public class AdminActivity extends Activity {
             JSONObject u = users.optJSONObject(i);
             if (u != null) out.add(u.optString("email"));
         }
-        if (out.isEmpty()) out.add("No users");
+        if (out.isEmpty()) out.add("No users returned from server");
         return out;
     }
 
@@ -364,7 +366,7 @@ public class AdminActivity extends Activity {
             JSONObject d = drives.optJSONObject(i);
             if (d != null) out.add(d.optString("nickname") + " | " + d.optString("id"));
         }
-        if (out.isEmpty()) out.add("No drives");
+        if (out.isEmpty()) out.add("No drives returned from server");
         return out;
     }
 
@@ -384,18 +386,39 @@ public class AdminActivity extends Activity {
     }
 
     private Spinner spinner(ArrayList<String> items) {
-        Spinner sp = new Spinner(this);
-        ArrayAdapter<String> ad = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, items);
-        sp.setAdapter(ad);
-        return sp;
-    }
+    Spinner sp = new Spinner(this);
+    ArrayAdapter<String> ad = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            TextView tv = (TextView) super.getView(position, convertView, parent);
+            tv.setTextColor(Color.WHITE);
+            tv.setTextSize(15);
+            tv.setPadding(dp(12), dp(12), dp(12), dp(12));
+            tv.setBackgroundColor(Color.rgb(24, 24, 24));
+            return tv;
+        }
 
-    private Spinner spinner(String[] items) {
-        Spinner sp = new Spinner(this);
-        ArrayAdapter<String> ad = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, items);
-        sp.setAdapter(ad);
-        return sp;
-    }
+        @Override
+        public View getDropDownView(int position, View convertView, ViewGroup parent) {
+            TextView tv = (TextView) super.getDropDownView(position, convertView, parent);
+            tv.setTextColor(Color.rgb(255, 196, 0));
+            tv.setTextSize(16);
+            tv.setPadding(dp(14), dp(16), dp(14), dp(16));
+            tv.setBackgroundColor(Color.rgb(10, 10, 10));
+            return tv;
+        }
+    };
+    ad.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+    sp.setAdapter(ad);
+    sp.setPopupBackgroundDrawable(bg(Color.rgb(10, 10, 10), Color.rgb(255, 196, 0)));
+    return sp;
+}
+
+private Spinner spinner(String[] items) {
+    ArrayList<String> list = new ArrayList<>();
+    for (String item : items) list.add(item);
+    return spinner(list);
+}
 
     private JSONObject get(String endpoint) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(baseUrl + endpoint).openConnection();
