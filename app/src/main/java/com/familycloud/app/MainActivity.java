@@ -55,6 +55,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+    public static final String KEY_TOKEN = "token";
+    public static final String KEY_EMAIL = "email";
+
     private static final String NATIVE_LOGIN_ENDPOINT = "/api/native/login";
     private String adminCode = "";
 
@@ -112,7 +115,7 @@ protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
     baseUrl = prefs.getString(KEY_BASE_URL, "");
-    token = prefs.getString(KEY_TOKEN, "");
+    token = prefs.getString(KEY_TOKEN, prefs.getString("api_token", ""));
     email = prefs.getString(KEY_EMAIL, "");
     adminCode = prefs.getString("adminCode", "");
     trimCacheAsync();
