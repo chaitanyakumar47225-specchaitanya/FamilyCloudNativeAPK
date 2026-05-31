@@ -1,5 +1,11 @@
 package com.familycloud.app;
 
+import android.graphics.RectF;
+
+import android.graphics.Paint;
+
+import android.graphics.Canvas;
+
 import android.widget.ImageView;
 
 import android.widget.ProgressBar;
@@ -49,6 +55,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+    private static final String NATIVE_LOGIN_ENDPOINT = "/api/native/login";
+    private String adminCode = "";
 
     private ArrayList<JSONObject> galleryItemsV2 = new ArrayList<>();
     private HashSet<String> selectedGalleryKeysV2 = new HashSet<>();
@@ -100,14 +108,18 @@ public class MainActivity extends Activity {
     private int previewIndex = -1;
 
     @Override
-    protected void onCreate(Bundle b) {
-        super.onCreate(b);
-        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        io = Executors.newFixedThreadPool(4);
-        baseUrl = prefs.getString("baseUrl", DEFAULT_URL);
-        cookie = prefs.getString("cookie", "");
-        showModeScreen();
-    }
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+    baseUrl = prefs.getString(KEY_BASE_URL, "");
+    token = prefs.getString(KEY_TOKEN, "");
+    email = prefs.getString(KEY_EMAIL, "");
+    adminCode = prefs.getString("adminCode", "");
+    trimCacheAsync();
+
+    if (token.length() > 8 && baseUrl.length() > 8) showDashboard();
+    else showModePicker();
+}
 
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
@@ -276,7 +288,354 @@ public class MainActivity extends Activity {
         return out;
     }
 
-    private JSONObject getJson(String path) throws Exception {
+private void addAdminDrive(JSONObject d) {
+    String id = d.optString("id", d.optString("driveId", d.optString("path", d.optString("device", ""))));
+    String name = d.optString("nickname", d.optString("name", id));
+
+    LinearLayout box = new LinearLayout(this);
+    box.setOrientation(LinearLayout.VERTICAL);
+    box.setPadding(12, 12, 12, 12);
+    box.setBackgroundColor(Color.rgb(22, 22, 22));
+
+    box.addView(text("💽 " + name, 17, Color.WHITE));
+    box.addView(text("ID: " + id, 12, Color.GRAY));
+    box.addView(text("Temp: " + d.optString("temp", d.optString("temperature", "unknown")) + "°C", 14, Color.rgb(255, 152, 0)));
+    box.addView(text("Free: " + d.optString("freeText", "?"), 14, Color.LTGRAY));
+
+    EditText nick = input("Drive nickname", name);
+    Button save = button("Save Nickname");
+
+    save.setOnClickListener(v -> saveDriveNickname(id, nick.getText().toString().trim()));
+
+    box.addView(nick);
+    box.addView(save);
+    root.addView(box);
+}
+
+private void addAdminUser(JSONObject u, JSONArray drives) {
+    String em = u.optString("email");
+
+    LinearLayout box = new LinearLayout(this);
+    box.setOrientation(LinearLayout.VERTICAL);
+    box.setPadding(12, 12, 12, 12);
+    box.setBackgroundColor(Color.rgb(22, 22, 22));
+
+    box.addView(text(em, 16, Color.WHITE));
+    box.addView(text(u.optString("usedText") + " / " + u.optString("quotaText") + " · " + u.optInt("files") + " files", 14, Color.LTGRAY));
+    box.addView(text("Drive: " + u.optString("driveNickname", u.optString("driveName", "")), 14, Color.YELLOW));
+
+    EditText quota = input("Quota GB", String.valueOf(u.optDouble("quotaGB", 30)));
+    Button saveQuota = button("Save Quota");
+
+    saveQuota.setOnClickListener(v -> saveUserQuota(em, quota.getText().toString().trim()));
+
+    box.addView(quota);
+    box.addView(saveQuota);
+
+    for (int i = 0; i < drives.length(); i++) {
+        JSONObject d = drives.optJSONObject(i);
+        if (d == null) continue;
+
+        String id = d.optString("id", d.optString("driveId", d.optString("path", d.optString("device", ""))));
+        String dn = d.optString("nickname", d.optString("name", id));
+
+        Button move = button("Move to " + dn);
+        move.setOnClickListener(v -> moveUserDisk(em, id));
+        box.addView(move);
+    }
+
+    root.addView(box);
+}
+
+private void saveDriveNickname(String driveId, String nickname) {
+    new Thread(() -> {
+        try {
+            JSONObject b = new JSONObject();
+            b.put("code", adminCode);
+            b.put("driveId", driveId);
+            b.put("nickname", nickname);
+
+            JSONObject r = post("/api/native/admin/drive-nickname", b, true);
+            if (!r.optBoolean("ok")) throw new Exception(r.optString("error", "save failed"));
+
+            toast("Drive nickname saved");
+            runOnUiThread(this::showAdmin);
+        } catch (Exception e) {
+            toast("Drive nickname failed: " + e.getMessage());
+        }
+    }).start();
+}
+
+private void saveUserQuota(String em, String quotaGB) {
+    new Thread(() -> {
+        try {
+            JSONObject b = new JSONObject();
+            b.put("code", adminCode);
+            b.put("email", em);
+            b.put("quotaGB", quotaGB);
+
+            JSONObject r = post("/api/native/admin/quota", b, true);
+            if (!r.optBoolean("ok")) throw new Exception(r.optString("error", "quota failed"));
+
+            toast("Quota saved");
+            runOnUiThread(this::showAdmin);
+        } catch (Exception e) {
+            toast("Quota failed: " + e.getMessage());
+        }
+    }).start();
+}
+
+private void moveUserDisk(String em, String driveId) {
+    new AlertDialog.Builder(this)
+            .setTitle("Move user to disk?")
+            .setMessage(em + "\nDisk: " + driveId)
+            .setPositiveButton("Move", (d, w) -> new Thread(() -> {
+                try {
+                    JSONObject b = new JSONObject();
+                    b.put("code", adminCode);
+                    b.put("email", em);
+                    b.put("driveId", driveId);
+
+                    JSONObject r = post("/api/native/admin/user-disk", b, true);
+                    if (!r.optBoolean("ok")) throw new Exception(r.optString("error", "move failed"));
+
+                    toast("User moved");
+                    runOnUiThread(this::showAdmin);
+                } catch (Exception e) {
+                    toast("Move failed: " + e.getMessage());
+                }
+            }).start())
+            .setNegativeButton("Cancel", null)
+            .show();
+}
+
+private void startZipProcess() {
+    Dialog dialog = new Dialog(this);
+
+    LinearLayout box = new LinearLayout(this);
+    box.setOrientation(LinearLayout.VERTICAL);
+    box.setPadding(24, 24, 24, 24);
+    box.setBackgroundColor(Color.rgb(10, 10, 10));
+
+    TextView title = text("Creating ZIP Backup", 22, Color.WHITE);
+    TextView status = text("Starting ZIP job...", 15, Color.LTGRAY);
+
+    ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+    bar.setMax(100);
+    bar.setIndeterminate(true);
+
+    Button open = button("Open ZIP Link");
+    open.setVisibility(View.GONE);
+
+    Button cancel = button("Cancel ZIP Process");
+
+    final String[] jobId = new String[]{""};
+    final boolean[] done = new boolean[]{false};
+
+    cancel.setOnClickListener(v -> {
+        if (!done[0] && jobId[0].length() > 0) cancelZipJob(jobId[0]);
+        dialog.dismiss();
+    });
+
+    box.addView(title);
+    box.addView(status);
+    box.addView(bar);
+    box.addView(open);
+    box.addView(cancel);
+
+    dialog.setContentView(box);
+    dialog.setOnCancelListener(d -> {
+        if (!done[0] && jobId[0].length() > 0) cancelZipJob(jobId[0]);
+    });
+    dialog.show();
+
+    new Thread(() -> {
+        try {
+            JSONObject start = post("/api/native/account/zip-start", new JSONObject(), true);
+            if (!start.optBoolean("ok")) throw new Exception(start.optString("error", "zip start failed"));
+
+            jobId[0] = start.optString("id", "");
+            if (jobId[0].length() == 0) throw new Exception("server returned no ZIP job id");
+
+            while (!done[0]) {
+                JSONObject r = get("/api/native/account/zip-status/" + URLEncoder.encode(jobId[0], "UTF-8"));
+                String st = r.optString("status", "");
+                int pct = r.optInt("progress", 0);
+
+                runOnUiThread(() -> {
+                    bar.setIndeterminate(false);
+                    bar.setProgress(Math.max(0, Math.min(100, pct)));
+                    status.setText("ZIP status: " + st + " · " + pct + "%");
+                });
+
+                if ("ready".equalsIgnoreCase(st)) {
+                    done[0] = true;
+                    String link = absoluteUrl(r.optString("url", r.optString("downloadUrl", "")));
+                    String expires = r.optString("expiresText", "");
+
+                    runOnUiThread(() -> {
+                        bar.setProgress(100);
+                        status.setText("ZIP complete.\nValid until: " + expires + "\n" + link);
+                        open.setVisibility(View.VISIBLE);
+                        open.setOnClickListener(v -> openLink(link));
+                        cancel.setText("Close");
+                        cancel.setOnClickListener(v -> dialog.dismiss());
+                    });
+                    return;
+                }
+
+                if ("failed".equalsIgnoreCase(st) || "cancelled".equalsIgnoreCase(st)) {
+                    done[0] = true;
+                    runOnUiThread(() -> {
+                        status.setText("ZIP " + st + ": " + r.optString("error", ""));
+                        cancel.setText("Close");
+                        cancel.setOnClickListener(v -> dialog.dismiss());
+                    });
+                    return;
+                }
+
+                Thread.sleep(2000);
+            }
+        } catch (Exception e) {
+            done[0] = true;
+            runOnUiThread(() -> {
+                bar.setIndeterminate(false);
+                status.setText("ZIP failed: " + e.getMessage());
+                cancel.setText("Close");
+                cancel.setOnClickListener(v -> dialog.dismiss());
+            });
+        }
+    }).start();
+}
+
+private void cancelZipJob(String id) {
+    new Thread(() -> {
+        try {
+            post("/api/native/account/zip-cancel/" + URLEncoder.encode(id, "UTF-8"), new JSONObject(), true);
+            toast("ZIP cancelled and temp file deleted");
+        } catch (Exception e) {
+            toast("ZIP cancel failed: " + e.getMessage());
+        }
+    }).start();
+}
+
+private void showChangePasswordDialog() {
+    LinearLayout box = new LinearLayout(this);
+    box.setOrientation(LinearLayout.VERTICAL);
+    box.setPadding(16, 16, 16, 16);
+
+    EditText oldP = input("Current password", "");
+    EditText newP = input("New password", "");
+    EditText confirm = input("Confirm new password", "");
+
+    oldP.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+    newP.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+    confirm.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+    box.addView(oldP);
+    box.addView(newP);
+    box.addView(confirm);
+
+    new AlertDialog.Builder(this)
+            .setTitle("Change Password")
+            .setView(box)
+            .setPositiveButton("Change", (d, w) -> changePassword(oldP.getText().toString(), newP.getText().toString(), confirm.getText().toString()))
+            .setNegativeButton("Cancel", null)
+            .show();
+}
+
+private void changePassword(String oldPass, String newPass, String confirm) {
+    if (!newPass.equals(confirm)) {
+        toast("Passwords do not match");
+        return;
+    }
+
+    if (newPass.length() < 6) {
+        toast("Password must be at least 6 characters");
+        return;
+    }
+
+    new Thread(() -> {
+        try {
+            JSONObject b = new JSONObject();
+            b.put("oldPassword", oldPass);
+            b.put("newPassword", newPass);
+
+            JSONObject r = post("/api/native/account/change-password", b, true);
+            if (!r.optBoolean("ok")) throw new Exception(r.optString("error", "password failed"));
+
+            toast("Password changed");
+        } catch (Exception e) {
+            toast("Password failed: " + e.getMessage());
+        }
+    }).start();
+}
+
+private String cleanUrl(String url) {
+    if (url == null) return "";
+    url = url.trim();
+    while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
+    return url;
+}
+
+private String absoluteUrl(String url) {
+    if (url == null) return "";
+    if (url.startsWith("http://") || url.startsWith("https://")) return url;
+    if (url.startsWith("/")) return baseUrl + url;
+    return baseUrl + "/" + url;
+}
+
+private void openLink(String link) {
+    try {
+        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(link)));
+    } catch (Exception e) {
+        toast("Cannot open ZIP link");
+    }
+}
+
+public static class CircleProgressView extends View {
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private int percent = 0;
+
+    public CircleProgressView(Activity context) {
+        super(context);
+    }
+
+    public void setPercent(int p) {
+        percent = Math.max(0, Math.min(100, p));
+        invalidate();
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+
+        float w = getWidth();
+        float h = getHeight();
+        float size = Math.min(w, h) - 20;
+        float left = (w - size) / 2f;
+        float top = (h - size) / 2f;
+
+        RectF rect = new RectF(left, top, left + size, top + size);
+
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(12);
+        paint.setColor(Color.rgb(55, 55, 55));
+        canvas.drawArc(rect, 0, 360, false, paint);
+
+        paint.setColor(Color.rgb(255, 196, 0));
+        canvas.drawArc(rect, -90, percent * 3.6f, false, paint);
+
+        paint.setStyle(Paint.Style.FILL);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(34);
+        canvas.drawText(percent + "%", w / 2f, h / 2f + 8, paint);
+    }
+}
+
+private JSONObject getJson(String path) throws Exception {
         return new JSONObject(request("GET", path, null, null));
     }
 
@@ -377,7 +736,7 @@ public class MainActivity extends Activity {
                     return;
                 }
                 baseUrl = u;
-                prefs.edit().putString("baseUrl", baseUrl).apply();
+                prefs.edit().putString(KEY_BASE_URL, baseUrl).apply();
                 showUrlChoice();
             }
         });
@@ -405,65 +764,19 @@ public class MainActivity extends Activity {
     }
 
     private void showLogin() {
-        baseScreen("Login", false);
-        final EditText email = input("Email", false);
-        final EditText pass = input("Password", true);
-        email.setText(prefs.getString("email", ""));
-        content.addView(email);
-        content.addView(pass);
-
-        Button login = btn("Login", GREEN);
-        Button urlBtn = btn("Change Server URL", TOP);
-        content.addView(login, new LinearLayout.LayoutParams(-1, dp(58)));
-        content.addView(urlBtn, new LinearLayout.LayoutParams(-1, dp(58)));
-
-        login.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                final String em = email.getText().toString().trim();
-                final String pw = pass.getText().toString();
-                if (!em.contains("@") || pw.length() < 1) {
-                    alert("Missing", "Enter email and password.");
-                    return;
-                }
-
-                runIo(new Job() {
-                    public void run() throws Exception {
-                        boolean ok = false;
-                        try {
-                            JSONObject body = new JSONObject();
-                            body.put("email", em);
-                            body.put("password", pw);
-                            postJson("/api/login", body);
-                            ok = true;
-                        } catch (Exception ignored) {}
-
-                        if (!ok) {
-                            String form = "email=" + enc(em) + "&password=" + enc(pw);
-                            request("POST", "/login", form, "application/x-www-form-urlencoded");
-                        }
-
-                        currentEmail = em;
-                        prefs.edit()
-                                .putString("email", em)
-                                .putString("baseUrl", baseUrl)
-                                .putString("cookie", cookie == null ? "" : cookie)
-                                .apply();
-
-                        runOnUiThread(new Runnable() { public void run() { showDashboard(); }});
-                    }
-                });
-            }
-        });
-
-        urlBtn.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showEditUrl(); }});
-    }
+    showModePicker();
+}
 
     private void logout() {
-        prefs.edit().remove("cookie").apply();
-        cookie = "";
-        currentEmail = "";
-        showModeScreen();
-    }
+    prefs.edit()
+            .remove(KEY_TOKEN)
+            .remove(KEY_EMAIL)
+            .apply();
+
+    token = "";
+    email = "";
+    showModePicker();
+}
 
     private void showOffline() {
         baseScreen("Offline Mode", false);
@@ -475,74 +788,43 @@ public class MainActivity extends Activity {
     }
 
     private void showDashboard() {
-        baseScreen("Dashboard", true);
-        content.addView(tv("Family Cloud storage, backup, gallery, and device health.", 15, WHITE, 0));
+    base("Dashboard");
+    nav();
+    root.addView(text("Loading dashboard...", 16, Color.YELLOW));
 
-        final TextView user = tv("Logged in as: loading...", 15, YELLOW, 1);
-        content.addView(user, panelLp());
+    new Thread(() -> {
+        try {
+            JSONObject d = get("/api/native/dashboard");
+            runOnUiThread(() -> {
+                base("Dashboard");
+                nav();
 
-        final TextView storage = tv("Storage Used\nLoading...", 22, WHITE, 1);
-        storage.setGravity(Gravity.CENTER);
-        content.addView(storage, panelLp());
+                int percent = Math.max(0, Math.min(100, d.optInt("percent", 0)));
 
-        LinearLayout grid = new LinearLayout(this);
-        grid.setOrientation(LinearLayout.VERTICAL);
-        final TextView files = tv("📁 Files\n0", 20, WHITE, 1);
-        final TextView photos = tv("🖼 Photos\n0", 20, WHITE, 1);
-        final TextView videos = tv("🎥 Videos\n0", 20, WHITE, 1);
-        final TextView temp = tv("🌡 Temperature\nLoading...", 20, WHITE, 1);
-        grid.addView(card(files));
-        grid.addView(card(photos));
-        grid.addView(card(videos));
-        grid.addView(card(temp));
-        content.addView(grid);
+                LinearLayout top = new LinearLayout(this);
+                top.setOrientation(LinearLayout.VERTICAL);
+                top.setPadding(12, 12, 12, 12);
+                top.setGravity(Gravity.CENTER_HORIZONTAL);
+                top.setBackgroundColor(Color.rgb(18, 18, 18));
 
-        TextView qa = tv("Quick Actions", 26, YELLOW, 1);
-        content.addView(qa);
-        Button g = btn("Gallery", TOP);
-        Button u = btn("Upload Files", TOP);
-        Button a = btn("Account", TOP);
-        Button ad = btn("Admin", TOP);
-        content.addView(g);
-        content.addView(u);
-        content.addView(a);
-        content.addView(ad);
+                top.addView(text("Email: " + email, 15, Color.YELLOW));
 
-        g.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showGallery(); }});
-        u.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showUpload(); }});
-        a.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showAccount(); }});
-        ad.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showAdmin(); }});
+                CircleProgressView circle = new CircleProgressView(this);
+                circle.setPercent(percent);
+                top.addView(circle, new LinearLayout.LayoutParams(180, 180));
 
-        runIo(new Job() {
-            public void run() throws Exception {
-                final JSONObject cu = safeGet("/api/current-user");
-                final JSONObject d = safeGet("/api/dashboard");
-                final JSONObject t = safeGet("/api/temperature");
+                top.addView(text("Storage: " + d.optString("usedText") + " / " + d.optString("quotaText"), 18, Color.WHITE));
+                top.addView(text("Free: " + d.optString("freeText"), 15, Color.LTGRAY));
+                root.addView(top);
 
-                runOnUiThread(new Runnable() {
-                    public void run() {
-                        String em = q(cu, "email", "user", "username");
-                        if (em.length() == 0 || em.equals("unknown")) em = prefs.getString("email", currentEmail);
-                        currentEmail = em;
-                        user.setText("Logged in as: " + em);
-
-                        String used = q(d, "usedStorage", "realUserUsed", "storageUsed", "usedText");
-                        String quota = q(d, "quota", "allowedStorage", "totalStorage", "quotaText");
-                        int percent = qi(d, "storagePercent", "percent", "usedPercent");
-                        storage.setText("Storage Used\n" + percent + "%\n" + used + (quota.length() > 0 ? " / " + quota : " used"));
-
-                        files.setText("📁 Files\n" + q(d, "totalFiles", "realFiles", "fileCount"));
-                        photos.setText("🖼 Photos\n" + q(d, "totalPhotos", "photos", "photoCount"));
-                        videos.setText("🎥 Videos\n" + q(d, "totalVideos", "videos", "videoCount"));
-
-                        String tempText = q(t, "displayText", "temperatureText");
-                        String drive = q(t, "assignedDrive");
-                        temp.setText("🌡 Temperature\n" + (tempText.length() > 0 ? tempText : "No sensor") + "\n" + drive);
-                    }
-                });
-            }
-        });
-    }
+                root.addView(text("Files: " + d.optInt("files") + "    Photos: " + d.optInt("photos") + "    Videos: " + d.optInt("videos"), 16, Color.WHITE));
+                root.addView(text("Drive Temp: " + d.optString("temp", "unknown") + "°C", 16, Color.rgb(255, 152, 0)));
+            });
+        } catch (Exception e) {
+            toast("Dashboard error: " + e.getMessage());
+        }
+    }).start();
+}
 
     private JSONObject safeGet(String path) {
         try { return getJson(path); } catch (Exception e) { return new JSONObject(); }
@@ -614,8 +896,6 @@ public class MainActivity extends Activity {
         }
     }).start();
 }
-
-
 
     private LinearLayout pagerBar() {
         LinearLayout l = new LinearLayout(this);
@@ -1035,7 +1315,6 @@ public class MainActivity extends Activity {
         postJson("/api/delete-file", body);
     }
 
-    
 // FC_NATIVE_GALLERY_FINAL_START
 
 private interface GalleryProgressV2 {
@@ -1659,7 +1938,6 @@ private void deleteSelectedGalleryFilesV2() {
 
 // FC_NATIVE_GALLERY_FINAL_END
 
-
 private void showUpload() {
         baseScreen("Upload", true);
         content.addView(tv("Upload files to your current logged-in Family Cloud account. No manual email nonsense.", 15, WHITE, 0));
@@ -1748,37 +2026,145 @@ private void showUpload() {
     }
 
     private void showAccount() {
-        baseScreen("Account", true);
-        content.addView(tv("Logged in as:", 16, YELLOW, 1));
-        content.addView(tv(currentEmail.length() > 0 ? currentEmail : prefs.getString("email", "unknown"), 16, WHITE, 0));
-        Button dash = btn("Dashboard", TOP);
-        Button logout = btn("Logout", RED);
-        content.addView(dash);
-        content.addView(logout);
-        dash.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { showDashboard(); }});
-        logout.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { logout(); }});
-    }
+    base("Account");
+    nav();
 
-    private void showAdmin() {
-        baseScreen("Admin", true);
-        final EditText code = input("Admin code", true);
-        Button unlock = btn("Unlock Admin", GREEN);
-        content.addView(code);
-        content.addView(unlock);
+    root.addView(text("Email: " + email, 18, Color.YELLOW));
 
-        unlock.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                runIo(new Job() {
-                    public void run() throws Exception {
-                        JSONObject b = new JSONObject();
-                        b.put("code", code.getText().toString());
-                        postJson("/api/admin/unlock", b);
-                        runOnUiThread(new Runnable() { public void run() { loadAdminPanel(); }});
-                    }
-                });
+    Button zip = button("Create ZIP Backup");
+    zip.setOnClickListener(v -> startZipProcess());
+
+    Button changePassword = button("Change Password");
+    changePassword.setOnClickListener(v -> showChangePasswordDialog());
+
+    Button deleteData = button("Delete My Whole Data");
+    deleteData.setOnClickListener(v -> {
+        final EditText confirm = input("Type DELETE", "");
+        new AlertDialog.Builder(this)
+                .setTitle("Delete all uploaded data?")
+                .setMessage("This deletes your whole server data.")
+                .setView(confirm)
+                .setPositiveButton("Delete", (d, w) -> {
+                    if ("DELETE".equals(confirm.getText().toString().trim())) deleteMyData();
+                    else toast("Wrong confirmation");
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    });
+
+    root.addView(zip);
+    root.addView(changePassword);
+    root.addView(deleteData);
+}
+
+    
+
+
+
+private void deleteMyData() {
+    new Thread(() -> {
+        try {
+            JSONObject b = new JSONObject();
+            b.put("confirm", "DELETE");
+
+            JSONObject r = post("/api/native/account/delete-data", b, true);
+            if (!r.optBoolean("ok")) {
+                throw new Exception(r.optString("error", "delete failed"));
             }
-        });
+
+            toast("All server data deleted");
+            runOnUiThread(this::showDashboard);
+        } catch (Exception e) {
+            toast("Delete data failed: " + e.getMessage());
+        }
+    }).start();
+}
+
+private void showAdminLock() {
+    Dialog dialog = new Dialog(this);
+
+    LinearLayout box = new LinearLayout(this);
+    box.setOrientation(LinearLayout.VERTICAL);
+    box.setPadding(24, 24, 24, 24);
+    box.setBackgroundColor(Color.rgb(15, 15, 15));
+
+    TextView title = text("Admin Locked", 24, Color.YELLOW);
+    TextView sub = text("Enter admin code to open native admin panel.", 14, Color.LTGRAY);
+
+    EditText code = input("Admin code", adminCode.length() > 0 ? adminCode : "");
+    code.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+
+    Button unlock = button("Unlock Admin");
+    unlock.setOnClickListener(v -> {
+        String c = code.getText().toString().trim();
+
+        if (c.length() < 4) {
+            toast("Enter admin code");
+            return;
+        }
+
+        adminCode = c;
+        prefs.edit().putString("adminCode", adminCode).apply();
+
+        dialog.dismiss();
+        showAdmin();
+    });
+
+    box.addView(title);
+    box.addView(sub);
+    box.addView(code);
+    box.addView(unlock);
+
+    dialog.setContentView(box);
+    dialog.show();
+
+    Window w = dialog.getWindow();
+    if (w != null) {
+        w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
     }
+}
+
+private void showAdmin() {
+    base("Admin");
+    nav();
+    root.addView(text("Loading admin panel...", 16, Color.YELLOW));
+
+    new Thread(() -> {
+        try {
+            String q = "?code=" + URLEncoder.encode(adminCode.length() > 0 ? adminCode : ADMIN_CODE, "UTF-8");
+            JSONObject ru = get("/api/native/admin/users" + q);
+            JSONObject rd = get("/api/native/admin/drives" + q);
+
+            JSONArray users = ru.optJSONArray("users");
+            JSONArray drives = rd.optJSONArray("drives");
+
+            if (users == null) users = new JSONArray();
+            if (drives == null) drives = new JSONArray();
+
+            JSONArray finalUsers = users;
+            JSONArray finalDrives = drives;
+
+            runOnUiThread(() -> {
+                base("Admin");
+                nav();
+
+                root.addView(text("Drives", 22, Color.YELLOW));
+                for (int i = 0; i < finalDrives.length(); i++) {
+                    JSONObject d = finalDrives.optJSONObject(i);
+                    if (d != null) addAdminDrive(d);
+                }
+
+                root.addView(text("Users", 22, Color.YELLOW));
+                for (int i = 0; i < finalUsers.length(); i++) {
+                    JSONObject u = finalUsers.optJSONObject(i);
+                    if (u != null) addAdminUser(u, finalDrives);
+                }
+            });
+        } catch (Exception e) {
+            toast("Admin error: " + e.getMessage());
+        }
+    }).start();
+}
 
     private void loadAdminPanel() {
         baseScreen("Admin Panel", true);
@@ -1873,4 +2259,62 @@ private void showUpload() {
     @Override public void onBackPressed() {
         showDashboard();
     }
+
+private void showModePicker() {
+    base("Choose Server");
+
+    root.addView(text("Choose where Family Cloud should connect.", 18, Color.WHITE));
+    root.addView(text("Local starts empty. Native server is prefilled with your server URL.", 14, Color.LTGRAY));
+
+    Button local = button("Local server");
+    local.setText("Local server\nEnter local IP manually");
+    local.setOnClickListener(v -> showLogin("", "Local"));
+
+    Button nativeServer = button("Native server");
+    nativeServer.setText("Native server\n" + ONLINE_URL);
+    nativeServer.setOnClickListener(v -> showLogin(ONLINE_URL, "Native"));
+
+    root.addView(local);
+    root.addView(nativeServer);
+
+    if (baseUrl != null && baseUrl.length() > 8) {
+        Button saved = button("Use saved server");
+        saved.setText("Use saved server\n" + baseUrl);
+        saved.setOnClickListener(v -> showLogin(baseUrl, "Saved"));
+        root.addView(saved);
+    }
+}
+
+private void showLogin(String suggestedUrl, String mode) {
+    base(mode + " Login");
+
+    EditText server = input(mode.equals("Local") ? "Local URL, example http://192.168.1.5:3000" : "Server URL", suggestedUrl);
+    EditText em = input("User ID / Email", email);
+    EditText pass = input("Password", "");
+    pass.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+    Button login = button("Login");
+    login.setOnClickListener(v -> {
+        baseUrl = cleanUrl(server.getText().toString().trim());
+        email = em.getText().toString().trim().toLowerCase(Locale.ROOT);
+
+        if (baseUrl.length() < 8) {
+            toast("Enter server URL first");
+            return;
+        }
+
+        doLogin(email, pass.getText().toString());
+    });
+
+    Button back = button("Back");
+    back.setOnClickListener(v -> showModePicker());
+
+    root.addView(text("Session is saved in app storage after successful login.", 14, Color.LTGRAY));
+    root.addView(server);
+    root.addView(em);
+    root.addView(pass);
+    root.addView(login);
+    root.addView(back);
+}
+
 }
