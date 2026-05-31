@@ -34,6 +34,9 @@ import android.widget.Toast;
 import android.widget.VideoView;
 
 import androidx.core.content.FileProvider;
+import androidx.media3.ui.PlayerView;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.common.MediaItem;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -77,6 +80,8 @@ public class GalleryActivity extends Activity {
     private final ArrayList<GalleryItem> items = new ArrayList<>();
     private final HashSet<String> selected = new HashSet<>();
     private boolean selectMode = false;
+    private int thumbDone = 0;
+    private int thumbTotal = 1;
 
     private File cacheRoot;
 
@@ -87,6 +92,7 @@ public class GalleryActivity extends Activity {
     private float zoom = 1f;
     private float downX = 0f;
     private ScaleGestureDetector scaleDetector;
+    private ExoPlayer activePlayer;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -504,34 +510,27 @@ public class GalleryActivity extends Activity {
     }
 
     private void loadThumb(GalleryItem item, ImageView img) {
-        new Thread(() -> {
-            try {
-                File f = ensureCached(item, item.pageNumber, null);
+    new Thread(() -> {
+        try {
+            Bitmap bm = downloadThumbBitmap(item);
+            runOnUiThread(() -> {
+                if (bm != null) img.setImageBitmap(bm);
 
-                Bitmap bm;
+                thumbDone++;
+                int pct = 35 + (int) Math.min(45, (thumbDone * 45.0) / Math.max(1, thumbTotal));
+                setProgress(pct, "Loading thumbnails: " + thumbDone + "/" + thumbTotal);
+            });
+        } catch (Exception ignored) {
+            runOnUiThread(() -> {
+                thumbDone++;
+                int pct = 35 + (int) Math.min(45, (thumbDone * 45.0) / Math.max(1, thumbTotal));
+                setProgress(pct, "Loading thumbnails: " + thumbDone + "/" + thumbTotal);
+            });
+        }
+    }).start();
+}
 
-                if (item.kind.equals("video")) {
-                    bm = ThumbnailUtils.createVideoThumbnail(f.getAbsolutePath(), MediaStore.Images.Thumbnails.MINI_KIND);
 
-                    if (bm == null) {
-                        try {
-                            MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-                            retriever.setDataSource(f.getAbsolutePath());
-                            bm = retriever.getFrameAtTime(1_000_000);
-                            retriever.release();
-                        } catch (Exception ignored) {}
-                    }
-                } else {
-                    bm = decodeSampled(f, 360);
-                }
-
-                if (bm != null) {
-                    Bitmap finalBm = bm;
-                    runOnUiThread(() -> img.setImageBitmap(finalBm));
-                }
-            } catch (Exception ignored) {}
-        }).start();
-    }
 
     private void toggleSelect(String key) {
         if (selected.contains(key)) selected.remove(key);
@@ -546,7 +545,18 @@ public class GalleryActivity extends Activity {
         showPreviewItem();
     }
 
-    private void closePreview() {
+    
+private void releasePlayer() {
+    try {
+        if (activePlayer != null) {
+            activePlayer.release();
+            activePlayer = null;
+        }
+    } catch (Exception ignored) {}
+}
+
+private void closePreview() {
+        releasePlayer();
         previewOverlay.setVisibility(View.GONE);
         previewStage.removeAllViews();
         zoom = 1f;
@@ -558,6 +568,7 @@ public class GalleryActivity extends Activity {
     }
 
     private void showPreviewItem() {
+        releasePlayer();
         GalleryItem item = currentItem();
         if (item == null) return;
 
@@ -581,21 +592,19 @@ public class GalleryActivity extends Activity {
                     previewStage.removeAllViews();
 
                     if (item.kind.equals("video")) {
-                        VideoView vv = new VideoView(this);
-                        vv.setVideoURI(Uri.fromFile(f));
-                        vv.setOnPreparedListener(mp -> {
-                            mp.setLooping(false);
-                            vv.start();
-                            setProgress(100, "Video preview ready");
-                        });
-                        vv.setOnErrorListener((mp, what, extra) -> {
-                            previewStage.removeAllViews();
-                            TextView err = text("Video preview not supported by Android codec.\nUse Download or Share.", 15, Color.rgb(255, 120, 120));
-                            err.setGravity(Gravity.CENTER);
-                            previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                            return true;
-                        });
-                        previewStage.addView(vv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                        PlayerView playerView = new PlayerView(this);
+                        playerView.setUseController(true);
+
+                        activePlayer = new ExoPlayer.Builder(this).build();
+                        playerView.setPlayer(activePlayer);
+
+                        MediaItem mediaItem = MediaItem.fromUri(Uri.fromFile(f));
+                        activePlayer.setMediaItem(mediaItem);
+                        activePlayer.prepare();
+                        activePlayer.play();
+
+                        previewStage.addView(playerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                        setProgress(100, "Video preview ready");
                     } else {
                         ImageView iv = new ImageView(this);
                         iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -1048,7 +1057,26 @@ private void trimCacheIfNeeded() {
         return out.toString("UTF-8");
     }
 
-    private String fileUrl(GalleryItem item) throws Exception {
+    
+private Bitmap downloadThumbBitmap(GalleryItem item) throws Exception {
+    HttpURLConnection c = (HttpURLConnection) new URL(thumbUrl(item)).openConnection();
+    c.setRequestProperty("X-FC-Token", token);
+    c.setConnectTimeout(12000);
+    c.setReadTimeout(60000);
+
+    int code = c.getResponseCode();
+    if (code < 200 || code >= 300) throw new Exception("thumb HTTP " + code);
+
+    try (InputStream in = c.getInputStream()) {
+        return BitmapFactory.decodeStream(in);
+    }
+}
+
+private String thumbUrl(GalleryItem item) throws Exception {
+    return baseUrl + "/api/native/thumb?folder=" + enc(item.folder) + "&name=" + enc(item.name) + "&token=" + enc(token);
+}
+
+private String fileUrl(GalleryItem item) throws Exception {
         return baseUrl + "/api/native/file?folder=" + enc(item.folder) + "&name=" + enc(item.name) + "&token=" + enc(token);
     }
 
@@ -1177,4 +1205,11 @@ private void trimCacheIfNeeded() {
         int pageNumber;
         long size;
     }
+
+@Override
+protected void onDestroy() {
+    releasePlayer();
+    super.onDestroy();
+}
+
 }
