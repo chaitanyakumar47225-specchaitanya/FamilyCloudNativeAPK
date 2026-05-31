@@ -52,8 +52,8 @@ import java.util.Locale;
 
 public class GalleryActivity extends Activity {
     private static final int PAGE_LIMIT = 35;
-    private static final long CACHE_LIMIT = 10L * 1024L * 1024L * 1024L;
-    private static final long CACHE_TRIM_TARGET = 5L * 1024L * 1024L * 1024L;
+    private static final long CACHE_LIMIT = 750L * 1024L * 1024L;
+    private static final long CACHE_TRIM_TARGET = 350L * 1024L * 1024L;
 
     private LinearLayout root;
     private GridLayout grid;
@@ -358,7 +358,6 @@ public class GalleryActivity extends Activity {
                     renderGrid();
                 });
 
-                prefetchPages(page);
                 trimCacheIfNeeded();
 
                 runOnUiThread(() -> {
@@ -451,21 +450,20 @@ public class GalleryActivity extends Activity {
     }
 
     private void loadThumb(GalleryItem item, ImageView img) {
-        new Thread(() -> {
-            try {
-                File f = ensureCached(item);
-                Bitmap bm;
-
-                if (item.kind.equals("video")) {
-                    bm = ThumbnailUtils.createVideoThumbnail(f.getAbsolutePath(), MediaStore.Images.Thumbnails.MINI_KIND);
-                } else {
-                    bm = decodeSampled(f, 320);
-                }
-
-                if (bm != null) runOnUiThread(() -> img.setImageBitmap(bm));
-            } catch (Exception ignored) {}
-        }).start();
+    if (item.kind.equals("video")) {
+        img.setBackgroundColor(Color.rgb(20, 20, 20));
+        return;
     }
+
+    new Thread(() -> {
+        try {
+            Bitmap bm = decodeRemoteSampled(item, 360);
+            if (bm != null) runOnUiThread(() -> img.setImageBitmap(bm));
+        } catch (Exception ignored) {}
+    }).start();
+}
+
+
 
     private void refreshCards() {
         selectBar.setVisibility(selectMode ? View.VISIBLE : View.GONE);
@@ -508,49 +506,80 @@ public class GalleryActivity extends Activity {
     }
 
     private void showPreviewItem() {
-        GalleryItem item = currentItem();
-        if (item == null) return;
+    GalleryItem item = currentItem();
+    if (item == null) return;
 
-        previewStage.removeAllViews();
-        previewTitle.setText(item.name);
-        zoom = 1f;
+    previewStage.removeAllViews();
+    previewTitle.setText(item.name);
+    zoom = 1f;
 
-        TextView loading = text("Loading preview...", 16, Color.LTGRAY);
-        loading.setGravity(Gravity.CENTER);
-        previewStage.addView(loading, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    TextView loading = text("Loading preview...", 16, Color.LTGRAY);
+    loading.setGravity(Gravity.CENTER);
+    previewStage.addView(loading, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        new Thread(() -> {
+    if (item.kind.equals("video")) {
+        runOnUiThread(() -> {
             try {
-                File f = ensureCached(item);
-                runOnUiThread(() -> {
-                    previewStage.removeAllViews();
+                previewStage.removeAllViews();
 
-                    if (item.kind.equals("video")) {
-                        VideoView vv = new VideoView(this);
-                        vv.setVideoURI(Uri.fromFile(f));
-                        vv.setOnPreparedListener(mp -> {
-                            mp.setLooping(false);
-                            vv.start();
-                        });
-                        previewStage.addView(vv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                    } else {
-                        ImageView iv = new ImageView(this);
-                        iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                        iv.setImageURI(Uri.fromFile(f));
-                        iv.setTag("previewImage");
-                        previewStage.addView(iv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                    }
+                VideoView vv = new VideoView(this);
+                vv.setVideoURI(Uri.parse(fileUrl(item)));
+                vv.setOnPreparedListener(mp -> {
+                    mp.setLooping(false);
+                    vv.start();
                 });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
+
+                vv.setOnErrorListener((mp, what, extra) -> {
                     previewStage.removeAllViews();
-                    TextView err = text("Preview failed: " + e.getMessage(), 15, Color.rgb(255, 120, 120));
+                    TextView err = text("Video preview not supported by Android codec.\nUse Download or Share.", 15, Color.rgb(255, 120, 120));
                     err.setGravity(Gravity.CENTER);
                     previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                    return true;
                 });
+
+                previewStage.addView(vv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            } catch (Exception e) {
+                previewStage.removeAllViews();
+                TextView err = text("Video preview failed: " + e.getMessage(), 15, Color.rgb(255, 120, 120));
+                err.setGravity(Gravity.CENTER);
+                previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             }
-        }).start();
+        });
+        return;
     }
+
+    new Thread(() -> {
+        try {
+            Bitmap bm = decodeRemoteSampled(item, 1800);
+
+            runOnUiThread(() -> {
+                previewStage.removeAllViews();
+
+                if (bm == null) {
+                    TextView err = text("Image preview failed. Use Download or Share.", 15, Color.rgb(255, 120, 120));
+                    err.setGravity(Gravity.CENTER);
+                    previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                    return;
+                }
+
+                ImageView iv = new ImageView(this);
+                iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                iv.setImageBitmap(bm);
+                iv.setTag("previewImage");
+                previewStage.addView(iv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            });
+        } catch (Exception e) {
+            runOnUiThread(() -> {
+                previewStage.removeAllViews();
+                TextView err = text("Preview failed: " + e.getMessage(), 15, Color.rgb(255, 120, 120));
+                err.setGravity(Gravity.CENTER);
+                previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            });
+        }
+    }).start();
+}
+
+
 
     private void setZoom(float z) {
         zoom = z;
@@ -719,7 +748,7 @@ public class GalleryActivity extends Activity {
 
     private Uri cachedUri(GalleryItem item) {
         try {
-            File f = ensureCached(item);
+            File f = ensureCachedForShare(item);
             return FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", f);
         } catch (Exception e) {
             return null;
@@ -830,7 +859,69 @@ public class GalleryActivity extends Activity {
         return out;
     }
 
-    private void trimCacheIfNeeded() {
+    
+private Bitmap decodeRemoteSampled(GalleryItem item, int req) throws Exception {
+    HttpURLConnection c1 = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
+    c1.setRequestProperty("X-FC-Token", token);
+    c1.setConnectTimeout(15000);
+    c1.setReadTimeout(180000);
+
+    BitmapFactory.Options bounds = new BitmapFactory.Options();
+    bounds.inJustDecodeBounds = true;
+
+    try (InputStream in = c1.getInputStream()) {
+        BitmapFactory.decodeStream(in, null, bounds);
+    }
+
+    int sample = 1;
+    while (bounds.outWidth / sample > req || bounds.outHeight / sample > req) {
+        sample *= 2;
+    }
+
+    HttpURLConnection c2 = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
+    c2.setRequestProperty("X-FC-Token", token);
+    c2.setConnectTimeout(15000);
+    c2.setReadTimeout(180000);
+
+    BitmapFactory.Options real = new BitmapFactory.Options();
+    real.inSampleSize = Math.max(1, sample);
+    real.inPreferredConfig = Bitmap.Config.RGB_565;
+
+    try (InputStream in = c2.getInputStream()) {
+        return BitmapFactory.decodeStream(in, null, real);
+    }
+}
+
+private File ensureCachedForShare(GalleryItem item) throws Exception {
+    File dir = new File(cacheRoot, "share_cache");
+    if (!dir.exists()) dir.mkdirs();
+
+    File out = new File(dir, safeFile(item.key));
+    if (out.exists() && out.length() > 0) {
+        out.setLastModified(System.currentTimeMillis());
+        return out;
+    }
+
+    HttpURLConnection c = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
+    c.setRequestProperty("X-FC-Token", token);
+    c.setConnectTimeout(15000);
+    c.setReadTimeout(600000);
+
+    int code = c.getResponseCode();
+    if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
+
+    try (InputStream in = c.getInputStream(); FileOutputStream fos = new FileOutputStream(out)) {
+        byte[] buf = new byte[128 * 1024];
+        int n;
+        while ((n = in.read(buf)) != -1) fos.write(buf, 0, n);
+    }
+
+    out.setLastModified(System.currentTimeMillis());
+    trimCacheIfNeeded();
+    return out;
+}
+
+private void trimCacheIfNeeded() {
         long size = folderSize(cacheRoot);
         if (size < CACHE_LIMIT) return;
 
@@ -914,8 +1005,8 @@ public class GalleryActivity extends Activity {
         String m = mime == null ? "" : mime.toLowerCase(Locale.ROOT);
         String n = name == null ? "" : name.toLowerCase(Locale.ROOT);
 
-        if (k.contains("video") || m.startsWith("video/") || n.matches(".*\\.(mp4|mov|mkv|avi|webm|3gp|m4v|mpeg|mpg|ts|wmv|flv)$")) return "video";
-        if (k.contains("photo") || k.contains("image") || m.startsWith("image/") || n.matches(".*\\.(jpg|jpeg|png|webp|gif|bmp|heic|heif|tif|tiff|avif)$")) return "photo";
+        if (k.contains("video") || m.startsWith("video/") || n.matches(".*\\.(mp4|mov|mkv|avi|webm|3gp|m4v|mpeg|mpg|ts|wmv|flv|mts|m2ts|divx|ogv)$")) return "video";
+        if (k.contains("photo") || k.contains("image") || m.startsWith("image/") || n.matches(".*\\.(jpg|jpeg|png|webp|gif|bmp|heic|heif|tif|tiff|avif|ico)$")) return "photo";
         return "file";
     }
 
