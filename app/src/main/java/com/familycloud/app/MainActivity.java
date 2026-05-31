@@ -1,5 +1,7 @@
 package com.familycloud.app;
 
+import java.util.Locale;
+
 import java.util.List;
 
 import java.util.Comparator;
@@ -2352,6 +2354,48 @@ private void collectCacheFiles(File f, List<File> out) {
     if (kids != null) {
         for (File k : kids) collectCacheFiles(k, out);
     }
+}
+
+
+private void doLogin(String userId, String password) {
+    new Thread(() -> {
+        try {
+            if (baseUrl == null || baseUrl.trim().length() < 8) {
+                throw new Exception("server URL missing");
+            }
+
+            String loginId = userId == null ? "" : userId.trim().toLowerCase(Locale.ROOT);
+
+            JSONObject body = new JSONObject();
+            body.put("email", loginId);
+            body.put("username", loginId);
+            body.put("userId", loginId);
+            body.put("password", password == null ? "" : password);
+
+            JSONObject r = post("/api/native/login", body, false);
+
+            if (!r.optBoolean("ok")) {
+                throw new Exception(r.optString("error", "login failed"));
+            }
+
+            token = r.optString("token", "");
+            email = r.optString("email", loginId);
+
+            if (token.length() < 8) {
+                throw new Exception("server returned empty token");
+            }
+
+            prefs.edit()
+                    .putString(KEY_BASE_URL, baseUrl)
+                    .putString(KEY_TOKEN, token)
+                    .putString(KEY_EMAIL, email)
+                    .apply();
+
+            runOnUiThread(this::showDashboard);
+        } catch (Exception e) {
+            toast("Login failed: " + e.getMessage());
+        }
+    }).start();
 }
 
 private void showModePicker() {
