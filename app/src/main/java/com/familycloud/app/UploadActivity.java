@@ -205,6 +205,7 @@ public class UploadActivity extends Activity {
             long totalBytes = 0;
             for (UploadItem item : selected) totalBytes += item.size;
 
+            final long finalTotalBytes = totalBytes;
             long[] uploadedBytes = new long[]{0};
             long startTime = System.currentTimeMillis();
 
@@ -215,11 +216,11 @@ public class UploadActivity extends Activity {
                 try {
                     uploadOne(item, doneForFile -> {
                         long currentTotal = uploadedBytes[0] + doneForFile;
-                        int pct = totalBytes > 0 ? (int) Math.min(100, (currentTotal * 100) / totalBytes) : 0;
+                        int pct = finalTotalBytes > 0 ? (int) Math.min(100, (currentTotal * 100) / finalTotalBytes) : 0;
 
                         long elapsed = Math.max(1, (System.currentTimeMillis() - startTime) / 1000);
                         long eta = currentTotal > 0
-                                ? Math.round((elapsed / (double) currentTotal) * (totalBytes - currentTotal))
+                                ? Math.round((elapsed / (double) currentTotal) * (finalTotalBytes - currentTotal))
                                 : 0;
 
                         runOnUiThread(() -> {
@@ -228,7 +229,7 @@ public class UploadActivity extends Activity {
                                     "Uploading: " + fileIndex + " / " + selected.size()
                                             + "\nFile: " + item.name
                                             + "\nCompleted: " + pct + "%"
-                                            + "\nUploaded: " + fmt(currentTotal) + " / " + fmt(totalBytes)
+                                            + "\nUploaded: " + fmt(currentTotal) + " / " + fmt(finalTotalBytes)
                                             + "\nETA: " + etaText(eta)
                             );
                         });
