@@ -7,9 +7,9 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.Matrix;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.MediaMetadataRetriever;
 import android.media.ThumbnailUtils;
 import android.net.Uri;
 import android.os.Bundle;
@@ -52,14 +52,17 @@ import java.util.Locale;
 
 public class GalleryActivity extends Activity {
     private static final int PAGE_LIMIT = 35;
-    private static final long CACHE_LIMIT = 750L * 1024L * 1024L;
-    private static final long CACHE_TRIM_TARGET = 350L * 1024L * 1024L;
+
+    private static final long CACHE_LIMIT = 6L * 1024L * 1024L * 1024L;
+    private static final long CACHE_DELETE_WHEN_FULL = 3L * 1024L * 1024L * 1024L;
 
     private LinearLayout root;
     private GridLayout grid;
     private TextView status;
-    private TextView pageText;
+    private TextView pageTextTop;
+    private TextView pageTextBottom;
     private ProgressBar loadingBar;
+
     private Button floatingSelect;
     private LinearLayout selectBar;
 
@@ -72,8 +75,8 @@ public class GalleryActivity extends Activity {
 
     private final ArrayList<GalleryItem> items = new ArrayList<>();
     private final HashSet<String> selected = new HashSet<>();
-
     private boolean selectMode = false;
+
     private File cacheRoot;
 
     private FrameLayout previewOverlay;
@@ -81,7 +84,6 @@ public class GalleryActivity extends Activity {
     private TextView previewTitle;
     private int previewIndex = -1;
     private float zoom = 1f;
-    private float lastX = 0f;
     private float downX = 0f;
     private ScaleGestureDetector scaleDetector;
 
@@ -100,7 +102,7 @@ public class GalleryActivity extends Activity {
         if (!cacheRoot.exists()) cacheRoot.mkdirs();
 
         buildPage();
-        loadPage(1, "all");
+        loadPage(1, "all", null);
     }
 
     private void buildPage() {
@@ -110,6 +112,45 @@ public class GalleryActivity extends Activity {
         pageRoot.setOrientation(LinearLayout.VERTICAL);
         pageRoot.setBackgroundColor(Color.rgb(4, 4, 4));
 
+        pageRoot.addView(topBar(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        loadingBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        loadingBar.setMax(100);
+        loadingBar.setProgress(0);
+        pageRoot.addView(loadingBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)));
+
+        status = text("Loading gallery...", 14, Color.LTGRAY);
+        status.setGravity(Gravity.CENTER);
+        pageRoot.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setPadding(0, 0, 0, dp(92));
+
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(8), dp(8), dp(8), dp(92));
+        root.setBackgroundColor(Color.rgb(4, 4, 4));
+
+        grid = new GridLayout(this);
+        grid.setColumnCount(3);
+        root.addView(grid);
+
+        root.addView(bottomPageBar(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        scroll.addView(root);
+        pageRoot.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+        frame.addView(pageRoot);
+
+        buildSelectBar(frame);
+        buildFloatingSelect(frame);
+        buildPreview(frame);
+
+        setContentView(frame);
+    }
+
+    private View topBar() {
         HorizontalScrollView topScroll = new HorizontalScrollView(this);
         topScroll.setHorizontalScrollBarEnabled(false);
 
@@ -125,60 +166,61 @@ public class GalleryActivity extends Activity {
         Button next = topButton("Next Page");
         Button back = topButton("Back");
 
-        all.setOnClickListener(v -> loadPage(1, "all"));
-        photos.setOnClickListener(v -> loadPage(1, "photo"));
-        videos.setOnClickListener(v -> loadPage(1, "video"));
+        pageTextTop = text("Page 1", 13, Color.LTGRAY);
+
+        all.setOnClickListener(v -> loadPage(1, "all", null));
+        photos.setOnClickListener(v -> loadPage(1, "photo", null));
+        videos.setOnClickListener(v -> loadPage(1, "video", null));
         prev.setOnClickListener(v -> {
-            if (page > 1) loadPage(page - 1, type);
+            if (page > 1) loadPage(page - 1, type, null);
         });
         next.setOnClickListener(v -> {
-            if (page < totalPages) loadPage(page + 1, type);
+            if (page < totalPages) loadPage(page + 1, type, null);
         });
         back.setOnClickListener(v -> finish());
-
-        loadingBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        loadingBar.setMax(100);
-        loadingBar.setProgress(0);
-
-        pageText = text("Page 1", 13, Color.LTGRAY);
 
         top.addView(all);
         top.addView(photos);
         top.addView(videos);
         top.addView(prev);
         top.addView(next);
-        top.addView(pageText);
+        top.addView(pageTextTop);
         top.addView(back);
 
         topScroll.addView(top);
-        pageRoot.addView(topScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        pageRoot.addView(loadingBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5)));
+        return topScroll;
+    }
 
-        status = text("Loading gallery...", 14, Color.LTGRAY);
-        status.setGravity(Gravity.CENTER);
-        pageRoot.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    private View bottomPageBar() {
+        LinearLayout bottom = new LinearLayout(this);
+        bottom.setOrientation(LinearLayout.HORIZONTAL);
+        bottom.setGravity(Gravity.CENTER);
+        bottom.setPadding(dp(8), dp(14), dp(8), dp(82));
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(false);
-        scroll.setPadding(0, 0, 0, dp(42));
+        Button prev = topButton("Previous Page");
+        Button next = topButton("Next Page");
+        pageTextBottom = text("Page 1", 13, Color.LTGRAY);
+        pageTextBottom.setGravity(Gravity.CENTER);
 
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(8), dp(8), dp(8), dp(58));
-        root.setBackgroundColor(Color.rgb(4, 4, 4));
+        prev.setOnClickListener(v -> {
+            if (page > 1) loadPage(page - 1, type, null);
+        });
 
-        grid = new GridLayout(this);
-        grid.setColumnCount(3);
-        root.addView(grid);
+        next.setOnClickListener(v -> {
+            if (page < totalPages) loadPage(page + 1, type, null);
+        });
 
-        scroll.addView(root);
-        pageRoot.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        bottom.addView(prev);
+        bottom.addView(pageTextBottom);
+        bottom.addView(next);
 
-        frame.addView(pageRoot);
+        return bottom;
+    }
 
+    private void buildSelectBar(FrameLayout frame) {
         selectBar = new LinearLayout(this);
         selectBar.setOrientation(LinearLayout.HORIZONTAL);
-        selectBar.setPadding(dp(8), dp(8), dp(8), dp(20));
+        selectBar.setPadding(dp(8), dp(8), dp(8), dp(36));
         selectBar.setGravity(Gravity.CENTER);
         selectBar.setBackgroundColor(Color.rgb(12, 12, 12));
         selectBar.setVisibility(View.GONE);
@@ -194,7 +236,7 @@ public class GalleryActivity extends Activity {
         cancel.setOnClickListener(v -> {
             selectMode = false;
             selected.clear();
-            refreshCards();
+            renderGrid();
         });
 
         selectBar.addView(share);
@@ -202,24 +244,22 @@ public class GalleryActivity extends Activity {
         selectBar.addView(delete);
         selectBar.addView(cancel);
 
-        FrameLayout.LayoutParams selectLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        selectLp.gravity = Gravity.BOTTOM;
-        frame.addView(selectBar, selectLp);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.BOTTOM;
+        frame.addView(selectBar, lp);
+    }
 
+    private void buildFloatingSelect(FrameLayout frame) {
         floatingSelect = topButton("Select");
-        floatingSelect.setText("Select");
         floatingSelect.setOnClickListener(v -> {
             selectMode = true;
-            refreshCards();
+            renderGrid();
         });
 
-        FrameLayout.LayoutParams fabLp = new FrameLayout.LayoutParams(dp(112), dp(56));
-        fabLp.gravity = Gravity.BOTTOM | Gravity.RIGHT;
-        fabLp.setMargins(0, 0, dp(16), dp(58));
-        frame.addView(floatingSelect, fabLp);
-
-        buildPreview(frame);
-        setContentView(frame);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(112), dp(56));
+        lp.gravity = Gravity.BOTTOM | Gravity.RIGHT;
+        lp.setMargins(0, 0, dp(16), dp(92));
+        frame.addView(floatingSelect, lp);
     }
 
     private void buildPreview(FrameLayout frame) {
@@ -240,8 +280,8 @@ public class GalleryActivity extends Activity {
         close.setOnClickListener(v -> closePreview());
 
         Button del = topButton("Delete");
-        del.setBackground(bg(Color.rgb(210, 35, 35), Color.rgb(230, 60, 60)));
         del.setTextColor(Color.WHITE);
+        del.setBackground(bg(Color.rgb(210, 35, 35), Color.rgb(230, 60, 60)));
         del.setOnClickListener(v -> deleteCurrentPreview());
 
         previewTitle = text("Preview", 14, Color.WHITE);
@@ -257,7 +297,7 @@ public class GalleryActivity extends Activity {
         LinearLayout bottom = new LinearLayout(this);
         bottom.setOrientation(LinearLayout.HORIZONTAL);
         bottom.setGravity(Gravity.CENTER);
-        bottom.setPadding(dp(8), dp(6), dp(8), dp(26));
+        bottom.setPadding(dp(8), dp(6), dp(8), dp(82));
 
         Button zoomOut = topButton("Zoom -");
         Button reset = topButton("Reset");
@@ -299,7 +339,6 @@ public class GalleryActivity extends Activity {
 
             if (ev.getAction() == MotionEvent.ACTION_DOWN) {
                 downX = ev.getX();
-                lastX = ev.getX();
                 return true;
             }
 
@@ -318,12 +357,11 @@ public class GalleryActivity extends Activity {
         });
     }
 
-    private void loadPage(int newPage, String newType) {
+    private void loadPage(int newPage, String newType, Runnable afterLoaded) {
         page = Math.max(1, newPage);
         type = newType == null ? "all" : newType;
 
-        loadingBar.setProgress(4);
-        status.setText("Loading page " + page + "...");
+        setProgress(2, "Loading page " + page + "...");
         grid.removeAllViews();
         items.clear();
 
@@ -340,6 +378,7 @@ public class GalleryActivity extends Activity {
                 if (arr != null) {
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject o = arr.getJSONObject(i);
+
                         GalleryItem item = new GalleryItem();
                         item.name = o.optString("name", o.optString("filename", "file"));
                         item.folder = o.optString("folder", o.optString("path", ""));
@@ -347,6 +386,8 @@ public class GalleryActivity extends Activity {
                         item.mime = o.optString("mime", o.optString("mimetype", guessMime(item.name)));
                         item.kind = detectKind(item.name, item.mime, o.optString("kind", o.optString("type", "")));
                         item.key = item.folder + "/" + item.name;
+                        item.pageNumber = page;
+
                         loaded.add(item);
                     }
                 }
@@ -354,28 +395,35 @@ public class GalleryActivity extends Activity {
                 runOnUiThread(() -> {
                     items.clear();
                     items.addAll(loaded);
-                    loadingBar.setProgress(45);
+                    updatePageLabels();
                     renderGrid();
                 });
 
+                cachePageFiles(loaded, page, true);
+                prefetchNeighbourPages(page);
                 trimCacheIfNeeded();
 
                 runOnUiThread(() -> {
-                    loadingBar.setProgress(100);
-                    status.setText("Loaded " + items.size() + " files · cache: current, previous, next page");
-                    pageText.setText("Page " + page + " / " + totalPages);
+                    setProgress(100, "Loaded page " + page + " · " + items.size() + " files");
+                    if (afterLoaded != null) afterLoaded.run();
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> {
-                    loadingBar.setProgress(0);
-                    status.setText("Gallery load failed: " + e.getMessage());
-                });
+                runOnUiThread(() -> setProgress(0, "Gallery load failed: " + e.getMessage()));
             }
         }).start();
     }
 
+    private void updatePageLabels() {
+        String text = "Page " + page + " / " + totalPages;
+        if (pageTextTop != null) pageTextTop.setText(text);
+        if (pageTextBottom != null) pageTextBottom.setText(text);
+    }
+
     private void renderGrid() {
         grid.removeAllViews();
+
+        selectBar.setVisibility(selectMode ? View.VISIBLE : View.GONE);
+        floatingSelect.setVisibility(selectMode ? View.GONE : View.VISIBLE);
 
         int screen = getResources().getDisplayMetrics().widthPixels;
         int gap = dp(7);
@@ -392,15 +440,18 @@ public class GalleryActivity extends Activity {
             grid.addView(card, lp);
         }
 
-        refreshCards();
+        status.setText(selectMode ? selected.size() + " selected" : "Page " + page + " · " + items.size() + " files");
     }
 
     private View buildCard(GalleryItem item, int index, int cell) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(2), dp(2), dp(2), dp(2));
-        card.setBackground(bg(Color.rgb(18, 18, 18), Color.rgb(40, 40, 40)));
         card.setTag(item.key);
+        card.setBackground(bg(
+                selected.contains(item.key) ? Color.rgb(45, 35, 0) : Color.rgb(18, 18, 18),
+                selected.contains(item.key) ? Color.rgb(255, 196, 0) : Color.rgb(40, 40, 40)
+        ));
 
         FrameLayout thumbWrap = new FrameLayout(this);
         thumbWrap.setBackgroundColor(Color.rgb(10, 10, 10));
@@ -413,16 +464,17 @@ public class GalleryActivity extends Activity {
         badge.setGravity(Gravity.CENTER);
         thumbWrap.addView(badge, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        TextView check = text("✓", 19, Color.rgb(255, 196, 0));
-        check.setTypeface(Typeface.DEFAULT_BOLD);
-        check.setGravity(Gravity.CENTER);
-        check.setBackground(bg(Color.rgb(0, 0, 0), Color.rgb(255, 196, 0)));
-        check.setVisibility(selected.contains(item.key) ? View.VISIBLE : View.GONE);
+        if (selected.contains(item.key)) {
+            TextView check = text("✓", 19, Color.rgb(255, 196, 0));
+            check.setTypeface(Typeface.DEFAULT_BOLD);
+            check.setGravity(Gravity.CENTER);
+            check.setBackground(bg(Color.rgb(0, 0, 0), Color.rgb(255, 196, 0)));
 
-        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(dp(30), dp(30));
-        cp.gravity = Gravity.TOP | Gravity.RIGHT;
-        cp.setMargins(0, dp(5), dp(5), 0);
-        thumbWrap.addView(check, cp);
+            FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(dp(30), dp(30));
+            cp.gravity = Gravity.TOP | Gravity.RIGHT;
+            cp.setMargins(0, dp(5), dp(5), 0);
+            thumbWrap.addView(check, cp);
+        }
 
         TextView name = text(item.name, 11, Color.LTGRAY);
         name.setGravity(Gravity.CENTER);
@@ -432,11 +484,8 @@ public class GalleryActivity extends Activity {
         card.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30)));
 
         card.setOnClickListener(v -> {
-            if (selectMode) {
-                toggleSelect(item.key);
-            } else {
-                openPreview(index);
-            }
+            if (selectMode) toggleSelect(item.key);
+            else openPreview(index);
         });
 
         card.setOnLongClickListener(v -> {
@@ -450,41 +499,39 @@ public class GalleryActivity extends Activity {
     }
 
     private void loadThumb(GalleryItem item, ImageView img) {
-    if (item.kind.equals("video")) {
-        img.setBackgroundColor(Color.rgb(20, 20, 20));
-        return;
-    }
+        new Thread(() -> {
+            try {
+                File f = ensureCached(item, item.pageNumber, null);
 
-    new Thread(() -> {
-        try {
-            Bitmap bm = decodeRemoteSampled(item, 360);
-            if (bm != null) runOnUiThread(() -> img.setImageBitmap(bm));
-        } catch (Exception ignored) {}
-    }).start();
-}
+                Bitmap bm;
 
+                if (item.kind.equals("video")) {
+                    bm = ThumbnailUtils.createVideoThumbnail(f.getAbsolutePath(), MediaStore.Images.Thumbnails.MINI_KIND);
 
+                    if (bm == null) {
+                        try {
+                            MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+                            retriever.setDataSource(f.getAbsolutePath());
+                            bm = retriever.getFrameAtTime(1_000_000);
+                            retriever.release();
+                        } catch (Exception ignored) {}
+                    }
+                } else {
+                    bm = decodeSampled(f, 360);
+                }
 
-    private void refreshCards() {
-        selectBar.setVisibility(selectMode ? View.VISIBLE : View.GONE);
-        floatingSelect.setVisibility(selectMode ? View.GONE : View.VISIBLE);
-
-        for (int i = 0; i < grid.getChildCount(); i++) {
-            View v = grid.getChildAt(i);
-            String key = String.valueOf(v.getTag());
-            v.setBackground(bg(
-                    selected.contains(key) ? Color.rgb(45, 35, 0) : Color.rgb(18, 18, 18),
-                    selected.contains(key) ? Color.rgb(255, 196, 0) : Color.rgb(40, 40, 40)
-            ));
-        }
-
-        status.setText(selectMode ? selected.size() + " selected" : "Page " + page + " · " + items.size() + " files");
+                if (bm != null) {
+                    Bitmap finalBm = bm;
+                    runOnUiThread(() -> img.setImageBitmap(finalBm));
+                }
+            } catch (Exception ignored) {}
+        }).start();
     }
 
     private void toggleSelect(String key) {
         if (selected.contains(key)) selected.remove(key);
         else selected.add(key);
-        refreshCards();
+        renderGrid();
     }
 
     private void openPreview(int index) {
@@ -506,80 +553,64 @@ public class GalleryActivity extends Activity {
     }
 
     private void showPreviewItem() {
-    GalleryItem item = currentItem();
-    if (item == null) return;
+        GalleryItem item = currentItem();
+        if (item == null) return;
 
-    previewStage.removeAllViews();
-    previewTitle.setText(item.name);
-    zoom = 1f;
+        previewStage.removeAllViews();
+        previewTitle.setText(item.name);
+        zoom = 1f;
 
-    TextView loading = text("Loading preview...", 16, Color.LTGRAY);
-    loading.setGravity(Gravity.CENTER);
-    previewStage.addView(loading, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        TextView loading = text("Preview loading: 0%", 16, Color.LTGRAY);
+        loading.setGravity(Gravity.CENTER);
+        previewStage.addView(loading, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setProgress(0, "Preview loading: 0%");
 
-    if (item.kind.equals("video")) {
-        runOnUiThread(() -> {
+        new Thread(() -> {
             try {
-                previewStage.removeAllViews();
+                File f = ensureCached(item, item.pageNumber, pct -> runOnUiThread(() -> {
+                    loading.setText("Preview loading: " + pct + "%");
+                    setProgress(pct, "Preview loading: " + pct + "%");
+                }));
 
-                VideoView vv = new VideoView(this);
-                vv.setVideoURI(Uri.parse(fileUrl(item)));
-                vv.setOnPreparedListener(mp -> {
-                    mp.setLooping(false);
-                    vv.start();
-                });
-
-                vv.setOnErrorListener((mp, what, extra) -> {
+                runOnUiThread(() -> {
                     previewStage.removeAllViews();
-                    TextView err = text("Video preview not supported by Android codec.\nUse Download or Share.", 15, Color.rgb(255, 120, 120));
-                    err.setGravity(Gravity.CENTER);
-                    previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                    return true;
+
+                    if (item.kind.equals("video")) {
+                        VideoView vv = new VideoView(this);
+                        vv.setVideoURI(Uri.fromFile(f));
+                        vv.setOnPreparedListener(mp -> {
+                            mp.setLooping(false);
+                            vv.start();
+                            setProgress(100, "Video preview ready");
+                        });
+                        vv.setOnErrorListener((mp, what, extra) -> {
+                            previewStage.removeAllViews();
+                            TextView err = text("Video preview not supported by Android codec.\nUse Download or Share.", 15, Color.rgb(255, 120, 120));
+                            err.setGravity(Gravity.CENTER);
+                            previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                            return true;
+                        });
+                        previewStage.addView(vv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                    } else {
+                        ImageView iv = new ImageView(this);
+                        iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                        iv.setImageURI(Uri.fromFile(f));
+                        iv.setTag("previewImage");
+                        previewStage.addView(iv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                        setProgress(100, "Photo preview ready");
+                    }
                 });
-
-                previewStage.addView(vv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             } catch (Exception e) {
-                previewStage.removeAllViews();
-                TextView err = text("Video preview failed: " + e.getMessage(), 15, Color.rgb(255, 120, 120));
-                err.setGravity(Gravity.CENTER);
-                previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            }
-        });
-        return;
-    }
-
-    new Thread(() -> {
-        try {
-            Bitmap bm = decodeRemoteSampled(item, 1800);
-
-            runOnUiThread(() -> {
-                previewStage.removeAllViews();
-
-                if (bm == null) {
-                    TextView err = text("Image preview failed. Use Download or Share.", 15, Color.rgb(255, 120, 120));
+                runOnUiThread(() -> {
+                    previewStage.removeAllViews();
+                    TextView err = text("Preview failed: " + e.getMessage(), 15, Color.rgb(255, 120, 120));
                     err.setGravity(Gravity.CENTER);
                     previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                    return;
-                }
-
-                ImageView iv = new ImageView(this);
-                iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                iv.setImageBitmap(bm);
-                iv.setTag("previewImage");
-                previewStage.addView(iv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            });
-        } catch (Exception e) {
-            runOnUiThread(() -> {
-                previewStage.removeAllViews();
-                TextView err = text("Preview failed: " + e.getMessage(), 15, Color.rgb(255, 120, 120));
-                err.setGravity(Gravity.CENTER);
-                previewStage.addView(err, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            });
-        }
-    }).start();
-}
-
-
+                    setProgress(0, "Preview failed");
+                });
+            }
+        }).start();
+    }
 
     private void setZoom(float z) {
         zoom = z;
@@ -598,15 +629,13 @@ public class GalleryActivity extends Activity {
         }
 
         if (page < totalPages) {
-            int targetPage = page + 1;
-            loadPage(targetPage, type);
-            new android.os.Handler().postDelayed(() -> {
+            loadPage(page + 1, type, () -> {
                 if (!items.isEmpty()) {
                     previewIndex = 0;
                     previewOverlay.setVisibility(View.VISIBLE);
                     showPreviewItem();
                 }
-            }, 1300);
+            });
         }
     }
 
@@ -618,15 +647,13 @@ public class GalleryActivity extends Activity {
         }
 
         if (page > 1) {
-            int targetPage = page - 1;
-            loadPage(targetPage, type);
-            new android.os.Handler().postDelayed(() -> {
+            loadPage(page - 1, type, () -> {
                 if (!items.isEmpty()) {
                     previewIndex = items.size() - 1;
                     previewOverlay.setVisibility(View.VISIBLE);
                     showPreviewItem();
                 }
-            }, 1300);
+            });
         }
     }
 
@@ -636,12 +663,13 @@ public class GalleryActivity extends Activity {
 
         new Thread(() -> {
             boolean ok = deleteServer(item);
-            if (!ok) {
-                runOnUiThread(() -> toast("Delete failed"));
-                return;
-            }
 
             runOnUiThread(() -> {
+                if (!ok) {
+                    toast("Delete failed");
+                    return;
+                }
+
                 selected.remove(item.key);
                 int old = previewIndex;
                 items.remove(item);
@@ -697,8 +725,6 @@ public class GalleryActivity extends Activity {
             c.setRequestProperty("Content-Type", "application/json");
             c.setRequestProperty("X-FC-Token", token);
 
-            try (FileOutputStream ignored = null) {}
-
             try (java.io.OutputStream out = c.getOutputStream()) {
                 out.write(body.toString().getBytes("UTF-8"));
             }
@@ -711,44 +737,55 @@ public class GalleryActivity extends Activity {
     }
 
     private void shareSelected() {
-        ArrayList<Uri> uris = new ArrayList<>();
+        new Thread(() -> {
+            ArrayList<Uri> uris = new ArrayList<>();
 
-        for (GalleryItem item : items) {
-            if (selected.contains(item.key)) {
-                Uri u = cachedUri(item);
-                if (u != null) uris.add(u);
+            for (GalleryItem item : items) {
+                if (selected.contains(item.key)) {
+                    Uri u = cachedUri(item);
+                    if (u != null) uris.add(u);
+                }
             }
-        }
 
-        if (uris.isEmpty()) {
-            toast("No cached selected files to share yet");
-            return;
-        }
+            runOnUiThread(() -> {
+                if (uris.isEmpty()) {
+                    toast("No cached selected files to share");
+                    return;
+                }
 
-        Intent intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
-        intent.setType("*/*");
-        intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivity(Intent.createChooser(intent, "Share files"));
+                Intent intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+                intent.setType("*/*");
+                intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(intent, "Share files"));
+            });
+        }).start();
     }
 
     private void shareOne(GalleryItem item) {
-        Uri u = cachedUri(item);
-        if (u == null) {
-            toast("File not cached yet");
-            return;
-        }
+        if (item == null) return;
 
-        Intent intent = new Intent(Intent.ACTION_SEND);
-        intent.setType(item.mime == null ? "*/*" : item.mime);
-        intent.putExtra(Intent.EXTRA_STREAM, u);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivity(Intent.createChooser(intent, "Share file"));
+        new Thread(() -> {
+            Uri u = cachedUri(item);
+
+            runOnUiThread(() -> {
+                if (u == null) {
+                    toast("Share failed");
+                    return;
+                }
+
+                Intent intent = new Intent(Intent.ACTION_SEND);
+                intent.setType(item.mime == null ? "*/*" : item.mime);
+                intent.putExtra(Intent.EXTRA_STREAM, u);
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(intent, "Share file"));
+            });
+        }).start();
     }
 
     private Uri cachedUri(GalleryItem item) {
         try {
-            File f = ensureCachedForShare(item);
+            File f = ensureCached(item, item.pageNumber, pct -> setProgress(pct, "Preparing share: " + pct + "%"));
             return FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", f);
         } catch (Exception e) {
             return null;
@@ -766,8 +803,7 @@ public class GalleryActivity extends Activity {
         if (item == null) return;
 
         try {
-            String url = fileUrl(item);
-            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(fileUrl(item)));
             req.addRequestHeader("X-FC-Token", token);
             req.setTitle(item.name);
             req.setDescription("Downloading from SRI LADLI");
@@ -783,7 +819,36 @@ public class GalleryActivity extends Activity {
         }
     }
 
-    private void prefetchPages(int current) {
+    private void cachePageFiles(ArrayList<GalleryItem> list, int pageNumber, boolean foreground) {
+        long total = 0;
+        for (GalleryItem item : list) total += Math.max(0, item.size);
+
+        long[] done = new long[]{0};
+        int count = Math.max(1, list.size());
+
+        for (int i = 0; i < list.size(); i++) {
+            GalleryItem item = list.get(i);
+            int idx = i + 1;
+
+            try {
+                ensureCached(item, pageNumber, pctForFile -> {
+                    if (!foreground) return;
+
+                    long current = done[0] + Math.max(0, (item.size * pctForFile) / 100);
+                    int pct;
+
+                    if (total > 0) pct = (int) Math.min(100, (current * 100) / total);
+                    else pct = (int) Math.min(100, (idx * 100.0) / count);
+
+                    setProgress(pct, "Caching page " + pageNumber + ": " + pct + "%");
+                });
+
+                done[0] += Math.max(0, item.size);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void prefetchNeighbourPages(int current) {
         ArrayList<Integer> keep = new ArrayList<>();
         if (current > 1) keep.add(current - 1);
         keep.add(current);
@@ -792,12 +857,16 @@ public class GalleryActivity extends Activity {
         cleanupOldPageDirs(keep);
 
         for (int p : keep) {
+            if (p == current) continue;
+
             new Thread(() -> {
                 try {
                     JSONObject data = get("/api/native/files?page=" + p + "&limit=" + PAGE_LIMIT + "&type=" + enc(type));
                     JSONArray arr = data.optJSONArray("items");
                     if (arr == null) arr = data.optJSONArray("files");
                     if (arr == null) return;
+
+                    ArrayList<GalleryItem> list = new ArrayList<>();
 
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject o = arr.getJSONObject(i);
@@ -808,11 +877,57 @@ public class GalleryActivity extends Activity {
                         item.mime = o.optString("mime", o.optString("mimetype", guessMime(item.name)));
                         item.kind = detectKind(item.name, item.mime, o.optString("kind", o.optString("type", "")));
                         item.key = item.folder + "/" + item.name;
-                        ensureCached(item);
+                        item.pageNumber = p;
+                        list.add(item);
                     }
+
+                    cachePageFiles(list, p, false);
+                    trimCacheIfNeeded();
                 } catch (Exception ignored) {}
             }).start();
         }
+    }
+
+    private File ensureCached(GalleryItem item, int pageNumber, CacheProgress cb) throws Exception {
+        File dir = new File(cacheRoot, "page_" + pageNumber);
+        if (!dir.exists()) dir.mkdirs();
+
+        File out = new File(dir, safeFile(item.key));
+        if (out.exists() && out.length() > 0) {
+            out.setLastModified(System.currentTimeMillis());
+            if (cb != null) cb.onProgress(100);
+            return out;
+        }
+
+        HttpURLConnection c = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
+        c.setRequestProperty("X-FC-Token", token);
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(600000);
+
+        int code = c.getResponseCode();
+        if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
+
+        long total = item.size > 0 ? item.size : c.getContentLengthLong();
+        long done = 0;
+
+        try (InputStream in = c.getInputStream(); FileOutputStream fos = new FileOutputStream(out)) {
+            byte[] buf = new byte[128 * 1024];
+            int n;
+
+            while ((n = in.read(buf)) != -1) {
+                fos.write(buf, 0, n);
+                done += n;
+
+                if (cb != null && total > 0) {
+                    int pct = (int) Math.max(1, Math.min(100, (done * 100) / total));
+                    cb.onProgress(pct);
+                }
+            }
+        }
+
+        out.setLastModified(System.currentTimeMillis());
+        if (cb != null) cb.onProgress(100);
+        return out;
     }
 
     private void cleanupOldPageDirs(ArrayList<Integer> keep) {
@@ -831,97 +946,7 @@ public class GalleryActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    private File ensureCached(GalleryItem item) throws Exception {
-        File dir = new File(cacheRoot, "page_" + page);
-        if (!dir.exists()) dir.mkdirs();
-
-        File out = new File(dir, safeFile(item.key));
-        if (out.exists() && out.length() > 0) {
-            out.setLastModified(System.currentTimeMillis());
-            return out;
-        }
-
-        HttpURLConnection c = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
-        c.setRequestProperty("X-FC-Token", token);
-        c.setConnectTimeout(15000);
-        c.setReadTimeout(600000);
-
-        int code = c.getResponseCode();
-        if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
-
-        try (InputStream in = c.getInputStream(); FileOutputStream fos = new FileOutputStream(out)) {
-            byte[] buf = new byte[128 * 1024];
-            int n;
-            while ((n = in.read(buf)) != -1) fos.write(buf, 0, n);
-        }
-
-        out.setLastModified(System.currentTimeMillis());
-        return out;
-    }
-
-    
-private Bitmap decodeRemoteSampled(GalleryItem item, int req) throws Exception {
-    HttpURLConnection c1 = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
-    c1.setRequestProperty("X-FC-Token", token);
-    c1.setConnectTimeout(15000);
-    c1.setReadTimeout(180000);
-
-    BitmapFactory.Options bounds = new BitmapFactory.Options();
-    bounds.inJustDecodeBounds = true;
-
-    try (InputStream in = c1.getInputStream()) {
-        BitmapFactory.decodeStream(in, null, bounds);
-    }
-
-    int sample = 1;
-    while (bounds.outWidth / sample > req || bounds.outHeight / sample > req) {
-        sample *= 2;
-    }
-
-    HttpURLConnection c2 = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
-    c2.setRequestProperty("X-FC-Token", token);
-    c2.setConnectTimeout(15000);
-    c2.setReadTimeout(180000);
-
-    BitmapFactory.Options real = new BitmapFactory.Options();
-    real.inSampleSize = Math.max(1, sample);
-    real.inPreferredConfig = Bitmap.Config.RGB_565;
-
-    try (InputStream in = c2.getInputStream()) {
-        return BitmapFactory.decodeStream(in, null, real);
-    }
-}
-
-private File ensureCachedForShare(GalleryItem item) throws Exception {
-    File dir = new File(cacheRoot, "share_cache");
-    if (!dir.exists()) dir.mkdirs();
-
-    File out = new File(dir, safeFile(item.key));
-    if (out.exists() && out.length() > 0) {
-        out.setLastModified(System.currentTimeMillis());
-        return out;
-    }
-
-    HttpURLConnection c = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
-    c.setRequestProperty("X-FC-Token", token);
-    c.setConnectTimeout(15000);
-    c.setReadTimeout(600000);
-
-    int code = c.getResponseCode();
-    if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
-
-    try (InputStream in = c.getInputStream(); FileOutputStream fos = new FileOutputStream(out)) {
-        byte[] buf = new byte[128 * 1024];
-        int n;
-        while ((n = in.read(buf)) != -1) fos.write(buf, 0, n);
-    }
-
-    out.setLastModified(System.currentTimeMillis());
-    trimCacheIfNeeded();
-    return out;
-}
-
-private void trimCacheIfNeeded() {
+    private void trimCacheIfNeeded() {
         long size = folderSize(cacheRoot);
         if (size < CACHE_LIMIT) return;
 
@@ -930,16 +955,20 @@ private void trimCacheIfNeeded() {
         Collections.sort(files, Comparator.comparingLong(File::lastModified));
 
         long deleted = 0;
+
         for (File f : files) {
             long len = f.length();
             if (f.delete()) deleted += len;
-            if (deleted >= CACHE_TRIM_TARGET) break;
+            if (deleted >= CACHE_DELETE_WHEN_FULL) break;
         }
+
+        setProgress(0, "Cache full. Deleted old cache: " + fmt(deleted));
     }
 
     private long folderSize(File f) {
         if (f == null || !f.exists()) return 0;
         if (f.isFile()) return f.length();
+
         long total = 0;
         File[] kids = f.listFiles();
         if (kids != null) for (File k : kids) total += folderSize(k);
@@ -948,20 +977,24 @@ private void trimCacheIfNeeded() {
 
     private void collectFiles(File f, ArrayList<File> out) {
         if (f == null || !f.exists()) return;
+
         if (f.isFile()) {
             out.add(f);
             return;
         }
+
         File[] kids = f.listFiles();
         if (kids != null) for (File k : kids) collectFiles(k, out);
     }
 
     private void deleteFileTree(File f) {
         if (f == null || !f.exists()) return;
+
         if (f.isDirectory()) {
             File[] kids = f.listFiles();
             if (kids != null) for (File k : kids) deleteFileTree(k);
         }
+
         f.delete();
     }
 
@@ -973,16 +1006,21 @@ private void trimCacheIfNeeded() {
 
         int code = c.getResponseCode();
         String text = read(code >= 400 ? c.getErrorStream() : c.getInputStream());
+
         if (code < 200 || code >= 300) throw new Exception(text);
+
         return new JSONObject(text);
     }
 
     private String read(InputStream in) throws Exception {
         if (in == null) return "";
+
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] b = new byte[8192];
         int n;
+
         while ((n = in.read(b)) != -1) out.write(b, 0, n);
+
         return out.toString("UTF-8");
     }
 
@@ -1007,13 +1045,16 @@ private void trimCacheIfNeeded() {
 
         if (k.contains("video") || m.startsWith("video/") || n.matches(".*\\.(mp4|mov|mkv|avi|webm|3gp|m4v|mpeg|mpg|ts|wmv|flv|mts|m2ts|divx|ogv)$")) return "video";
         if (k.contains("photo") || k.contains("image") || m.startsWith("image/") || n.matches(".*\\.(jpg|jpeg|png|webp|gif|bmp|heic|heif|tif|tiff|avif|ico)$")) return "photo";
+
         return "file";
     }
 
     private String guessMime(String name) {
         String ext = "";
         int dot = name == null ? -1 : name.lastIndexOf(".");
+
         if (dot >= 0 && dot < name.length() - 1) ext = name.substring(dot + 1).toLowerCase(Locale.ROOT);
+
         String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
         return mime == null ? "application/octet-stream" : mime;
     }
@@ -1028,11 +1069,33 @@ private void trimCacheIfNeeded() {
 
         BitmapFactory.Options real = new BitmapFactory.Options();
         real.inSampleSize = sample;
+        real.inPreferredConfig = Bitmap.Config.RGB_565;
+
         return BitmapFactory.decodeFile(file.getAbsolutePath(), real);
     }
 
     private String safeFile(String s) {
         return s.replaceAll("[\\\\/:*?\"<>|]", "_");
+    }
+
+    private String fmt(long bytes) {
+        double b = Math.max(0, bytes);
+        String[] u = {"B", "KB", "MB", "GB", "TB"};
+        int i = 0;
+
+        while (b >= 1024 && i < u.length - 1) {
+            b /= 1024.0;
+            i++;
+        }
+
+        return String.format(Locale.US, i == 0 ? "%.0f %s" : "%.2f %s", b, u[i]);
+    }
+
+    private void setProgress(int pct, String msg) {
+        runOnUiThread(() -> {
+            if (loadingBar != null) loadingBar.setProgress(Math.max(0, Math.min(100, pct)));
+            if (status != null && msg != null) status.setText(msg);
+        });
     }
 
     private TextView text(String v, int size, int color) {
@@ -1077,12 +1140,17 @@ private void trimCacheIfNeeded() {
         Toast.makeText(this, s, Toast.LENGTH_LONG).show();
     }
 
+    private interface CacheProgress {
+        void onProgress(int percent);
+    }
+
     private static class GalleryItem {
         String name;
         String folder;
         String mime;
         String kind;
         String key;
+        int pageNumber;
         long size;
     }
 }
