@@ -56,9 +56,9 @@ import java.util.Locale;
 public class GalleryActivity extends Activity {
     private static final int PAGE_LIMIT = 35;
 
-    private static final long CACHE_LIMIT = 6L * 1024L * 1024L * 1024L;
-    private static final long CACHE_DELETE_WHEN_FULL = 3L * 1024L * 1024L * 1024L;
-    private static final long MIN_FREE_SPACE_FOR_CACHE = 6L * 1024L * 1024L * 1024L;
+    private static final long CACHE_LIMIT = 10L * 1024L * 1024L * 1024L;
+    private static final long CACHE_DELETE_WHEN_FULL = 5L * 1024L * 1024L * 1024L;
+    private static final long MIN_FREE_SPACE_FOR_CACHE = 10L * 1024L * 1024L * 1024L;
 
     private LinearLayout root;
     private GridLayout grid;
@@ -110,6 +110,7 @@ public class GalleryActivity extends Activity {
 
         buildPage();
         loadPage(1, "all", null);
+        new android.os.Handler(getMainLooper()).postDelayed(() -> warmFirstTwoPagesCache(), 1500);
     }
 
     private void buildPage() {
@@ -411,7 +412,7 @@ public class GalleryActivity extends Activity {
                     prefetchNeighbourPages(page);
                     trimCacheIfNeeded();
                 } else {
-                    runOnUiThread(() -> setProgress(0, "Low storage. Need 6 GB free for gallery cache. Free: " + fmt(cacheRoot.getUsableSpace())));
+                    runOnUiThread(() -> setProgress(0, "Low storage. Need 10 GB free for gallery cache. Free: " + fmt(cacheRoot.getUsableSpace())));
                 }
 
                 runOnUiThread(() -> {
@@ -863,8 +864,50 @@ private void closePreview() {
         }
     }
 
-    private void prefetchNeighbourPages(int current) {
+    
+
+private void warmFirstTwoPagesCache() {
+    new Thread(() -> {
+        for (int warmPage = 1; warmPage <= 2; warmPage++) {
+            try {
+                JSONObject data = get("/api/native/files?page=" + warmPage + "&limit=" + PAGE_LIMIT + "&type=all");
+                JSONArray arr = data.optJSONArray("items");
+                if (arr == null) arr = data.optJSONArray("files");
+                if (arr == null) continue;
+
+                ArrayList<GalleryItem> warmItems = new ArrayList<>();
+
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject o = arr.getJSONObject(i);
+
+                    GalleryItem item = new GalleryItem();
+                    item.name = o.optString("name", o.optString("filename", "file"));
+                    item.folder = o.optString("folder", o.optString("path", ""));
+                    item.size = o.optLong("size", 0);
+                    item.mime = o.optString("mime", o.optString("mimetype", guessMime(item.name)));
+                    item.kind = detectKind(item.name, item.mime, o.optString("kind", o.optString("type", "")));
+                    item.key = item.folder + "/" + item.name;
+                    item.pageNumber = warmPage;
+
+                    warmItems.add(item);
+                }
+
+                runOnUiThread(() -> setProgress(10, "Building fast cache for first 2 pages..."));
+                cachePageFiles(warmItems, warmPage, false);
+                trimCacheIfNeeded();
+            } catch (Exception ignored) {}
+        }
+
+        runOnUiThread(() -> setProgress(100, "First 2 pages cache ready"));
+    }).start();
+}
+
+
+private void prefetchNeighbourPages(int current) {
         ArrayList<Integer> keep = new ArrayList<>();
+        // always keep first 2 pages cached
+        if (!keep.contains(1)) keep.add(1);
+        if (!keep.contains(2)) keep.add(2);
         if (current > 1) keep.add(current - 1);
         keep.add(current);
         if (current < totalPages) keep.add(current + 1);
@@ -915,7 +958,7 @@ private void closePreview() {
         }
 
         if (!hasEnoughFreeSpaceForCache()) {
-            throw new Exception("Need at least 6 GB free storage to cache gallery files. Free: " + fmt(cacheRoot.getUsableSpace()));
+            throw new Exception("Need at least 10 GB free storage to cache gallery files. Free: " + fmt(cacheRoot.getUsableSpace()));
         }
 
         HttpURLConnection c = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
@@ -935,7 +978,7 @@ private void closePreview() {
 
             while ((n = in.read(buf)) != -1) {
                 if (!hasEnoughFreeSpaceForCache()) {
-                    throw new Exception("Cache stopped. Phone free storage is below 6 GB.");
+                    throw new Exception("Cache stopped. Phone free storage is below 10 GB.");
                 }
 
                 fos.write(buf, 0, n);
@@ -954,6 +997,10 @@ private void closePreview() {
     }
 
     private void cleanupOldPageDirs(ArrayList<Integer> keep) {
+        // cleanup protects first two pages
+        if (!keep.contains(1)) keep.add(1);
+        if (!keep.contains(2)) keep.add(2);
+
         try {
             File[] dirs = cacheRoot.listFiles();
             if (dirs == null) return;
@@ -979,6 +1026,21 @@ private void closePreview() {
         }
     }
 
+
+
+private boolean isProtectedFirstTwoPageCacheFile(File f) {
+    try {
+        if (f == null) return false;
+        File parent = f.getParentFile();
+        if (parent == null) return false;
+
+        String name = parent.getName();
+        return "page_1".equals(name) || "page_2".equals(name);
+    } catch (Exception e) {
+        return false;
+    }
+}
+
 private void trimCacheIfNeeded() {
         long size = folderSize(cacheRoot);
         if (size < CACHE_LIMIT) return;
@@ -990,6 +1052,8 @@ private void trimCacheIfNeeded() {
         long deleted = 0;
 
         for (File f : files) {
+            if (isProtectedFirstTwoPageCacheFile(f)) continue;
+
             long len = f.length();
             if (f.delete()) deleted += len;
             if (deleted >= CACHE_DELETE_WHEN_FULL) break;
