@@ -55,6 +55,7 @@ public class GalleryActivity extends Activity {
 
     private static final long CACHE_LIMIT = 6L * 1024L * 1024L * 1024L;
     private static final long CACHE_DELETE_WHEN_FULL = 3L * 1024L * 1024L * 1024L;
+    private static final long MIN_FREE_SPACE_FOR_CACHE = 6L * 1024L * 1024L * 1024L;
 
     private LinearLayout root;
     private GridLayout grid;
@@ -399,9 +400,13 @@ public class GalleryActivity extends Activity {
                     renderGrid();
                 });
 
-                cachePageFiles(loaded, page, true);
-                prefetchNeighbourPages(page);
-                trimCacheIfNeeded();
+                if (hasEnoughFreeSpaceForCache()) {
+                    cachePageFiles(loaded, page, true);
+                    prefetchNeighbourPages(page);
+                    trimCacheIfNeeded();
+                } else {
+                    runOnUiThread(() -> setProgress(0, "Low storage. Need 6 GB free for gallery cache. Free: " + fmt(cacheRoot.getUsableSpace())));
+                }
 
                 runOnUiThread(() -> {
                     setProgress(100, "Loaded page " + page + " · " + items.size() + " files");
@@ -899,6 +904,10 @@ public class GalleryActivity extends Activity {
             return out;
         }
 
+        if (!hasEnoughFreeSpaceForCache()) {
+            throw new Exception("Need at least 6 GB free storage to cache gallery files. Free: " + fmt(cacheRoot.getUsableSpace()));
+        }
+
         HttpURLConnection c = (HttpURLConnection) new URL(fileUrl(item)).openConnection();
         c.setRequestProperty("X-FC-Token", token);
         c.setConnectTimeout(15000);
@@ -915,6 +924,10 @@ public class GalleryActivity extends Activity {
             int n;
 
             while ((n = in.read(buf)) != -1) {
+                if (!hasEnoughFreeSpaceForCache()) {
+                    throw new Exception("Cache stopped. Phone free storage is below 6 GB.");
+                }
+
                 fos.write(buf, 0, n);
                 done += n;
 
@@ -946,7 +959,17 @@ public class GalleryActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    private void trimCacheIfNeeded() {
+    
+    private boolean hasEnoughFreeSpaceForCache() {
+        try {
+            if (cacheRoot == null) return false;
+            return cacheRoot.getUsableSpace() >= MIN_FREE_SPACE_FOR_CACHE;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+private void trimCacheIfNeeded() {
         long size = folderSize(cacheRoot);
         if (size < CACHE_LIMIT) return;
 
