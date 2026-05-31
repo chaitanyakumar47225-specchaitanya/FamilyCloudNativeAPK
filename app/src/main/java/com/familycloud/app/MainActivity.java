@@ -55,6 +55,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+    private String token = "";
+
     public static final String KEY_TOKEN = "token";
     public static final String KEY_EMAIL = "email";
 
