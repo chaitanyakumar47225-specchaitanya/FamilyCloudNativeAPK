@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.provider.MediaStore;
 import android.webkit.MimeTypeMap;
 
@@ -125,6 +126,8 @@ public class BackupWorker extends Worker {
             collectFrom(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, uploadedKeys, items);
         }
 
+        collectDownloadsMedia(uploadedKeys, items);
+
         return items;
     }
 
@@ -169,6 +172,81 @@ public class BackupWorker extends Worker {
 
                 MediaItem item = new MediaItem();
                 item.uri = Uri.withAppendedPath(collection, String.valueOf(id));
+                item.name = name;
+                item.mime = mime;
+                item.key = key;
+
+                items.add(item);
+            }
+        } finally {
+            cursor.close();
+        }
+    }
+
+
+    private void collectDownloadsMedia(Set<String> uploadedKeys, ArrayList<MediaItem> items) {
+        if (Build.VERSION.SDK_INT < 29) return;
+        if (items.size() >= MAX_FILES_PER_RUN) return;
+
+        String[] projection = new String[]{
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.MIME_TYPE
+        };
+
+        Cursor cursor = getApplicationContext().getContentResolver().query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                MediaStore.MediaColumns.DATE_MODIFIED + " DESC"
+        );
+
+        if (cursor == null) return;
+
+        try {
+            int idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID);
+            int nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
+            int sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE);
+            int mimeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE);
+
+            while (cursor.moveToNext() && items.size() < MAX_FILES_PER_RUN) {
+                long id = cursor.getLong(idCol);
+                String name = cursor.getString(nameCol);
+                long size = cursor.getLong(sizeCol);
+                String mime = cursor.getString(mimeCol);
+
+                if (name == null || name.trim().length() == 0) name = "download_media_" + id;
+                if (mime == null || mime.trim().length() == 0) mime = guessMime(name);
+
+                String lowerMime = mime.toLowerCase(Locale.ROOT);
+                String lowerName = name.toLowerCase(Locale.ROOT);
+
+                boolean isPhoto = lowerMime.startsWith("image/")
+                        || lowerName.endsWith(".jpg")
+                        || lowerName.endsWith(".jpeg")
+                        || lowerName.endsWith(".png")
+                        || lowerName.endsWith(".webp")
+                        || lowerName.endsWith(".heic")
+                        || lowerName.endsWith(".heif");
+
+                boolean isVideo = lowerMime.startsWith("video/")
+                        || lowerName.endsWith(".mp4")
+                        || lowerName.endsWith(".mov")
+                        || lowerName.endsWith(".mkv")
+                        || lowerName.endsWith(".avi")
+                        || lowerName.endsWith(".3gp")
+                        || lowerName.endsWith(".webm");
+
+                if (!isPhoto && !isVideo) continue;
+
+                String key = MediaStore.Downloads.EXTERNAL_CONTENT_URI.toString() + ":" + id + ":" + size;
+
+                if (uploadedKeys.contains(key)) continue;
+
+                MediaItem item = new MediaItem();
+                item.uri = android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id);
                 item.name = name;
                 item.mime = mime;
                 item.key = key;

@@ -104,6 +104,7 @@ public class FreeSpaceManager extends Activity {
                 ArrayList<LocalMedia> all = new ArrayList<>();
                 all.addAll(scan(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "photo"));
                 all.addAll(scan(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video"));
+                all.addAll(scanDownloadsMedia());
 
                 if (all.isEmpty()) {
                     ui(100, "No local photos/videos found.");
@@ -161,6 +162,81 @@ public class FreeSpaceManager extends Activity {
                 m.modified = modified;
                 m.mime = mime;
                 m.key = kind + "|Phone|" + name + "|" + size + "|" + modified;
+
+                result.add(m);
+            }
+        } catch (Exception ignored) {}
+
+        return result;
+    }
+
+
+    private ArrayList<LocalMedia> scanDownloadsMedia() {
+        ArrayList<LocalMedia> result = new ArrayList<>();
+
+        if (Build.VERSION.SDK_INT < 29) return result;
+
+        String[] projection = new String[]{
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.MIME_TYPE
+        };
+
+        try (Cursor c = getContentResolver().query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                MediaStore.MediaColumns.DATE_MODIFIED + " DESC"
+        )) {
+            if (c == null) return result;
+
+            int idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID);
+            int nameCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
+            int sizeCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE);
+            int modCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED);
+            int mimeCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE);
+
+            while (c.moveToNext()) {
+                long id = c.getLong(idCol);
+                String name = safe(c.getString(nameCol), "download_file");
+                long size = c.getLong(sizeCol);
+                long modified = c.getLong(modCol);
+                String mime = safe(c.getString(mimeCol), guessMime(name));
+
+                if (size <= 0) continue;
+
+                String lowerMime = mime.toLowerCase(Locale.ROOT);
+                String lowerName = name.toLowerCase(Locale.ROOT);
+
+                boolean isPhoto = lowerMime.startsWith("image/")
+                        || lowerName.endsWith(".jpg")
+                        || lowerName.endsWith(".jpeg")
+                        || lowerName.endsWith(".png")
+                        || lowerName.endsWith(".webp")
+                        || lowerName.endsWith(".heic")
+                        || lowerName.endsWith(".heif");
+
+                boolean isVideo = lowerMime.startsWith("video/")
+                        || lowerName.endsWith(".mp4")
+                        || lowerName.endsWith(".mov")
+                        || lowerName.endsWith(".mkv")
+                        || lowerName.endsWith(".avi")
+                        || lowerName.endsWith(".3gp")
+                        || lowerName.endsWith(".webm");
+
+                if (!isPhoto && !isVideo) continue;
+
+                LocalMedia m = new LocalMedia();
+                m.uri = android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id);
+                m.kind = isVideo ? "video" : "photo";
+                m.name = name;
+                m.size = size;
+                m.modified = modified;
+                m.mime = mime;
+                m.key = m.kind + "|Downloads|" + name + "|" + size + "|" + modified;
 
                 result.add(m);
             }

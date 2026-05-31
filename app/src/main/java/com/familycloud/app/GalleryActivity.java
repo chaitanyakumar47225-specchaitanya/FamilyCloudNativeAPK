@@ -419,16 +419,29 @@ private void buildPage() {
         Button close = topButton("Close");
         close.setOnClickListener(v -> closePreview());
 
+        Button prevTop = topButton("‹");
+        prevTop.setTextSize(18);
+        prevTop.setMinWidth(dp(42));
+        prevTop.setMinHeight(dp(38));
+        prevTop.setOnClickListener(v -> previewPrev());
+
+        Button nextTop = topButton("›");
+        nextTop.setTextSize(18);
+        nextTop.setMinWidth(dp(42));
+        nextTop.setMinHeight(dp(38));
+        nextTop.setOnClickListener(v -> previewNext());
+
         Button del = topButton("Delete");
         del.setTextColor(Color.WHITE);
         del.setBackground(bg(Color.rgb(210, 35, 35), Color.rgb(230, 60, 60)));
         del.setOnClickListener(v -> deleteCurrentPreview());
 
-        previewTitle = text("Preview", 14, Color.WHITE);
-        previewTitle.setSingleLine(true);
+        previewTitle = text("", 1, Color.TRANSPARENT);
+        previewTitle.setVisibility(View.GONE);
 
         top.addView(close);
-        top.addView(previewTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        top.addView(prevTop);
+        top.addView(nextTop);
         top.addView(del);
 
         previewStage = new FrameLayout(this);
@@ -698,6 +711,8 @@ private void closePreview() {
         previewOverlay.setVisibility(View.GONE);
         previewStage.removeAllViews();
         zoom = 1f;
+        if (selectBar != null) selectBar.setVisibility(selectMode ? View.VISIBLE : View.GONE);
+        if (floatingSelect != null) floatingSelect.setVisibility(selectMode ? View.GONE : View.VISIBLE);
     }
 
     private GalleryItem currentItem() {
@@ -711,7 +726,7 @@ private void closePreview() {
         if (item == null) return;
 
         previewStage.removeAllViews();
-        previewTitle.setText(item.name);
+        previewTitle.setText("");
         zoom = 1f;
 
         TextView loading = text("Preview loading: 0%", 16, Color.LTGRAY);
@@ -747,7 +762,6 @@ private void closePreview() {
                         });
 
                         previewStage.addView(playerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                        addPreviewNavButtons();
                         setProgress(100, "Video preview ready · swipe or use buttons");
                     } else {
                         ImageView iv = new ImageView(this);
@@ -755,7 +769,6 @@ private void closePreview() {
                         iv.setImageURI(Uri.fromFile(f));
                         iv.setTag("previewImage");
                         previewStage.addView(iv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                        addPreviewNavButtons();
                         setProgress(100, "Photo preview ready · swipe or use buttons");
                     }
                 });
@@ -817,24 +830,7 @@ private void closePreview() {
     }
 
     private void addPreviewNavButtons() {
-        Button prev = topButton("‹ Prev");
-        prev.setTextColor(Color.BLACK);
-        prev.setOnClickListener(v -> previewPrev());
-
-        Button next = topButton("Next ›");
-        next.setTextColor(Color.BLACK);
-        next.setOnClickListener(v -> previewNext());
-
-        FrameLayout.LayoutParams lpPrev = new FrameLayout.LayoutParams(dp(96), dp(52));
-        lpPrev.gravity = Gravity.LEFT | Gravity.CENTER_VERTICAL;
-        lpPrev.setMargins(dp(10), 0, 0, 0);
-
-        FrameLayout.LayoutParams lpNext = new FrameLayout.LayoutParams(dp(96), dp(52));
-        lpNext.gravity = Gravity.RIGHT | Gravity.CENTER_VERTICAL;
-        lpNext.setMargins(0, 0, dp(10), 0);
-
-        previewStage.addView(prev, lpPrev);
-        previewStage.addView(next, lpNext);
+        // Disabled. Navigation buttons now live in the top preview bar.
     }
 
     private void handlePreviewSwipeOnly(MotionEvent ev) {
@@ -1096,6 +1092,7 @@ private void prefetchNeighbourPages(int current) {
         if (current > 1) keep.add(current - 1);
         keep.add(current);
         if (current < totalPages) keep.add(current + 1);
+        if ("video".equals(type) && current + 2 <= totalPages) keep.add(current + 2);
         if ("video".equals(type) && current + 2 <= totalPages) keep.add(current + 2);
 
         cleanupOldPageDirs(keep);
@@ -1413,13 +1410,13 @@ private String fileUrl(GalleryItem item) throws Exception {
         Button b = new Button(this);
         b.setText(s);
         b.setAllCaps(false);
-        b.setTextSize(12);
+        b.setTextSize(11);
         b.setTextColor(Color.BLACK);
         b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setMinHeight(dp(42));
+        b.setMinHeight(dp(38));
         b.setBackground(bg(Color.rgb(255, 196, 0), Color.rgb(255, 196, 0)));
 
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(46));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42));
         lp.setMargins(dp(3), dp(3), dp(3), dp(3));
         b.setLayoutParams(lp);
 
