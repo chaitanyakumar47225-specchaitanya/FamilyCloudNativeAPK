@@ -22,6 +22,7 @@ import androidx.work.OneTimeWorkRequest;
 import androidx.work.NetworkType;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.Constraints;
+import androidx.work.Data;
 
 public class BackupActivity extends Activity {
     private static final int MEDIA_PERMISSION_REQUEST = 9001;
@@ -45,7 +46,7 @@ public class BackupActivity extends Activity {
         root.setBackgroundColor(Color.rgb(18, 5, 5));
 
         TextView title = new TextView(this);
-        title.setText("Background Backup");
+        title.setText("Sync");
         title.setTextColor(Color.WHITE);
         title.setTextSize(28);
         title.setPadding(0, 0, 0, 18);
@@ -62,7 +63,7 @@ public class BackupActivity extends Activity {
         CheckBox videos = makeBox("Backup Videos", KEY_VIDEOS, true);
 
         Button save = new Button(this);
-        save.setText("Enable / Save Background Backup");
+        save.setText("Enable Background Backup");
         save.setOnClickListener(v -> {
             prefs.edit()
                     .putBoolean(KEY_ENABLED, enable.isChecked())
@@ -106,7 +107,7 @@ public class BackupActivity extends Activity {
         });
 
         Button free = new Button(this);
-        free.setText("Clear Phone Space");
+        free.setText("Free Up Space");
         free.setOnClickListener(v -> FreeSpaceManager.start(this));
 
         Button back = new Button(this);
@@ -189,7 +190,10 @@ public class BackupActivity extends Activity {
     }
 
     private void runSyncNow() {
-        OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(BackupWorker.class).build();
+        Data data = new Data.Builder().putBoolean("manual", true).build();
+        OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(BackupWorker.class)
+                .setInputData(data)
+                .build();
         WorkManager.getInstance(this).enqueue(request);
     }
 

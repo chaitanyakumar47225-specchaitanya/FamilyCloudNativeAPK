@@ -39,12 +39,13 @@ public class BackupWorker extends Worker {
     public Result doWork() {
         prefs = getApplicationContext().getSharedPreferences(MainActivity.PREFS, Context.MODE_PRIVATE);
 
-        if (!prefs.getBoolean(KEY_ENABLED, false)) {
+        boolean manual = getInputData().getBoolean("manual", false);
+        if (!manual && !prefs.getBoolean(KEY_ENABLED, false)) {
             return Result.success();
         }
 
         String serverUrl = prefs.getString(MainActivity.KEY_BASE_URL, MainActivity.ONLINE_URL);
-        String token = prefs.getString("api_token", "");
+        String token = prefs.getString(MainActivity.KEY_TOKEN, prefs.getString("api_token", ""));
         String cookie = prefs.getString(MainActivity.KEY_COOKIE, "");
 
         if (serverUrl == null || serverUrl.trim().length() == 0) {
@@ -195,6 +196,7 @@ public class BackupWorker extends Worker {
         conn.setRequestMethod("POST");
         if (token != null && token.trim().length() > 0) {
             conn.setRequestProperty("Authorization", "Bearer " + token);
+            conn.setRequestProperty("X-FC-Token", token);
         }
 
         if (cookie != null && cookie.trim().length() > 0) {
