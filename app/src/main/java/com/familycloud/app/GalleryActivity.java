@@ -54,7 +54,7 @@ import java.util.HashSet;
 import java.util.Locale;
 
 public class GalleryActivity extends Activity {
-    private static final int PAGE_LIMIT = 35;
+    private static final int PAGE_LIMIT = 40;
 
     private static final long CACHE_LIMIT = 10L * 1024L * 1024L * 1024L;
     private static final long CACHE_DELETE_WHEN_FULL = 5L * 1024L * 1024L * 1024L;
@@ -93,6 +93,7 @@ public class GalleryActivity extends Activity {
     private int previewIndex = -1;
     private float zoom = 1f;
     private float downX = 0f;
+    private float downY = 0f;
     private ScaleGestureDetector scaleDetector;
     private ExoPlayer activePlayer;
 
@@ -478,13 +479,15 @@ private void buildPage() {
 
             if (ev.getAction() == MotionEvent.ACTION_DOWN) {
                 downX = ev.getX();
+                downY = ev.getY();
                 return true;
             }
 
             if (ev.getAction() == MotionEvent.ACTION_UP) {
                 float dx = ev.getX() - downX;
+                float dy = ev.getY() - downY;
 
-                if (Math.abs(dx) > dp(70)) {
+                if (Math.abs(dx) > dp(70) && Math.abs(dx) > Math.abs(dy)) {
                     if (dx < 0) previewNext();
                     else previewPrev();
                 }
@@ -565,8 +568,9 @@ private void buildPage() {
     private void renderGrid() {
         grid.removeAllViews();
 
-        selectBar.setVisibility(selectMode ? View.VISIBLE : View.GONE);
-        floatingSelect.setVisibility(selectMode ? View.GONE : View.VISIBLE);
+        boolean previewOpen = previewOverlay != null && previewOverlay.getVisibility() == View.VISIBLE;
+        selectBar.setVisibility((selectMode && !previewOpen) ? View.VISIBLE : View.GONE);
+        floatingSelect.setVisibility((selectMode || previewOpen) ? View.GONE : View.VISIBLE);
 
         int screen = getResources().getDisplayMetrics().widthPixels;
         int gap = dp(7);
@@ -673,6 +677,8 @@ private void buildPage() {
     private void openPreview(int index) {
         if (index < 0 || index >= items.size()) return;
         previewIndex = index;
+        if (floatingSelect != null) floatingSelect.setVisibility(View.GONE);
+        if (selectBar != null) selectBar.setVisibility(View.GONE);
         previewOverlay.setVisibility(View.VISIBLE);
         showPreviewItem();
     }
@@ -735,15 +741,22 @@ private void closePreview() {
                         activePlayer.prepare();
                         activePlayer.play();
 
+                        playerView.setOnTouchListener((vv, ev) -> {
+                            handlePreviewSwipeOnly(ev);
+                            return false;
+                        });
+
                         previewStage.addView(playerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                        setProgress(100, "Video preview ready");
+                        addPreviewNavButtons();
+                        setProgress(100, "Video preview ready · swipe or use buttons");
                     } else {
                         ImageView iv = new ImageView(this);
                         iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
                         iv.setImageURI(Uri.fromFile(f));
                         iv.setTag("previewImage");
                         previewStage.addView(iv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                        setProgress(100, "Photo preview ready");
+                        addPreviewNavButtons();
+                        setProgress(100, "Photo preview ready · swipe or use buttons");
                     }
                 });
             } catch (Exception e) {
@@ -800,6 +813,47 @@ private void closePreview() {
                     showPreviewItem();
                 }
             });
+        }
+    }
+
+    private void addPreviewNavButtons() {
+        Button prev = topButton("‹ Prev");
+        prev.setTextColor(Color.BLACK);
+        prev.setOnClickListener(v -> previewPrev());
+
+        Button next = topButton("Next ›");
+        next.setTextColor(Color.BLACK);
+        next.setOnClickListener(v -> previewNext());
+
+        FrameLayout.LayoutParams lpPrev = new FrameLayout.LayoutParams(dp(96), dp(52));
+        lpPrev.gravity = Gravity.LEFT | Gravity.CENTER_VERTICAL;
+        lpPrev.setMargins(dp(10), 0, 0, 0);
+
+        FrameLayout.LayoutParams lpNext = new FrameLayout.LayoutParams(dp(96), dp(52));
+        lpNext.gravity = Gravity.RIGHT | Gravity.CENTER_VERTICAL;
+        lpNext.setMargins(0, 0, dp(10), 0);
+
+        previewStage.addView(prev, lpPrev);
+        previewStage.addView(next, lpNext);
+    }
+
+    private void handlePreviewSwipeOnly(MotionEvent ev) {
+        if (ev == null) return;
+
+        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+            downX = ev.getX();
+            downY = ev.getY();
+            return;
+        }
+
+        if (ev.getAction() == MotionEvent.ACTION_UP) {
+            float dx = ev.getX() - downX;
+            float dy = ev.getY() - downY;
+
+            if (Math.abs(dx) > dp(70) && Math.abs(dx) > Math.abs(dy)) {
+                if (dx < 0) previewNext();
+                else previewPrev();
+            }
         }
     }
 
@@ -1042,6 +1096,7 @@ private void prefetchNeighbourPages(int current) {
         if (current > 1) keep.add(current - 1);
         keep.add(current);
         if (current < totalPages) keep.add(current + 1);
+        if ("video".equals(type) && current + 2 <= totalPages) keep.add(current + 2);
 
         cleanupOldPageDirs(keep);
 
