@@ -828,6 +828,7 @@ public class GalleryActivity extends Activity {
         long total = 0;
         for (GalleryItem item : list) total += Math.max(0, item.size);
 
+        final long finalTotal = total;
         long[] done = new long[]{0};
         int count = Math.max(1, list.size());
 
@@ -842,7 +843,7 @@ public class GalleryActivity extends Activity {
                     long current = done[0] + Math.max(0, (item.size * pctForFile) / 100);
                     int pct;
 
-                    if (total > 0) pct = (int) Math.min(100, (current * 100) / total);
+                    if (finalTotal > 0) pct = (int) Math.min(100, (current * 100) / finalTotal);
                     else pct = (int) Math.min(100, (idx * 100.0) / count);
 
                     setProgress(pct, "Caching page " + pageNumber + ": " + pct + "%");
