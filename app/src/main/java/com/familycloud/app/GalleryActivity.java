@@ -486,6 +486,10 @@ private void buildPage() {
         });
 
         previewStage.setOnTouchListener((v, ev) -> {
+            // FC_NO_SWIPE_WHEN_ZOOMED: when photo is zoomed, swipes should move inside photo, not jump next/previous.
+            if (zoom > 1.05f && ev.getPointerCount() == 1 && ev.getAction() == MotionEvent.ACTION_UP) {
+                return true;
+            }
             scaleDetector.onTouchEvent(ev);
 
             if (ev.getPointerCount() > 1) return true;

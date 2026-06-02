@@ -100,7 +100,39 @@ public class AccountActivity extends Activity {
         card.addView(zipDownloadButton, full());
 
         root.addView(card, full());
+        checkExistingZipRequest();
     }
+
+    
+private void checkExistingZipRequest() {
+    zipStatus.setText("Checking existing ZIP request...");
+
+    new Thread(() -> {
+        try {
+            JSONObject r = get("/api/native/account/zip-status");
+
+            if (!r.optBoolean("requested", false)) {
+                runOnUiThread(() -> {
+                    zipProgress.setProgress(0);
+                    zipDownloadButton.setVisibility(Button.GONE);
+                    zipStatus.setText("No ZIP requested yet.");
+                });
+                return;
+            }
+
+            activeZipJobId = r.optString("id", "");
+            updateZipUi(r);
+
+            String st = r.optString("status", "");
+            if (activeZipJobId.length() > 0 && !"ready".equalsIgnoreCase(st) && !"expired".equalsIgnoreCase(st) && !"failed".equalsIgnoreCase(st)) {
+                pollZipStatus(activeZipJobId);
+            }
+        } catch (Exception e) {
+            runOnUiThread(() -> zipStatus.setText("ZIP check failed: " + e.getMessage()));
+        }
+    }).start();
+}
+
 
     private void startZipRequest() {
         zipProgress.setProgress(0);
@@ -126,44 +158,47 @@ public class AccountActivity extends Activity {
         }).start();
     }
 
+    
+private void updateZipUi(JSONObject r) {
+    runOnUiThread(() -> {
+        int progress = r.optInt("progress", 0);
+        String status = r.optString("status", "");
+        String eta = r.optString("etaText", "");
+        String message = r.optString("message", "");
+        String available = r.optString("availableTimeText", "");
+        String downloadUrl = r.optString("downloadUrl", "");
+
+        zipProgress.setProgress(Math.max(0, Math.min(100, progress)));
+
+        String text = "Status: " + status
+                + "\nProgress: " + progress + "%"
+                + "\nProcessed: " + r.optString("processedText", "0 B") + " / " + r.optString("totalText", "--")
+                + (eta.length() > 0 ? "\nEstimated completion: " + eta : "")
+                + (available.length() > 0 ? "\nAvailable time left: " + available : "")
+                + (message.length() > 0 ? "\n\n" + message : "");
+
+        zipStatus.setText(text);
+
+        if ("ready".equalsIgnoreCase(status) && downloadUrl.length() > 0) {
+            zipDownloadButton.setVisibility(Button.VISIBLE);
+            zipDownloadButton.setOnClickListener(v -> downloadWithManager(absoluteUrl(downloadUrl), "sri-ladli-backup.zip", true));
+        } else {
+            zipDownloadButton.setVisibility(Button.GONE);
+        }
+    });
+}
+
+
     private void pollZipStatus(String jobId) {
         new Thread(() -> {
             while (true) {
                 try {
                     JSONObject r = get("/api/native/account/zip-status/" + enc(jobId));
 
-                    JSONObject part = r.optJSONObject("activePart");
-                    int progress = r.optInt("progress", 0);
-                    String status = part == null ? r.optString("status") : part.optString("status");
-                    String eta = r.optString("etaText", "");
-                    String message = r.optString("message", "");
-                    String expires = r.optString("expiresText", "");
-                    String downloadUrl = r.optString("downloadUrl", "");
+                    updateZipUi(r);
 
-                    int partNum = part == null ? 0 : part.optInt("partNumber");
-                    int totalParts = r.optInt("totalParts", 1);
-
-                    runOnUiThread(() -> {
-                        zipProgress.setProgress(Math.max(0, Math.min(100, progress)));
-
-                        String text = "Status: " + status
-                                + "\nPart: " + partNum + " / " + totalParts
-                                + "\nProgress: " + progress + "%"
-                                + (eta.length() > 0 ? "\nETA: " + eta : "")
-                                + (expires.length() > 0 ? "\nAvailable until: " + expires : "")
-                                + (message.length() > 0 ? "\n\n" + message : "");
-
-                        zipStatus.setText(text);
-                    });
-
-                    if ("ready".equalsIgnoreCase(status) && downloadUrl.length() > 0) {
-                        runOnUiThread(() -> {
-                            zipDownloadButton.setVisibility(Button.VISIBLE);
-                            zipDownloadButton.setOnClickListener(v -> downloadWithManager(absoluteUrl(downloadUrl), "sri-ladli-backup-part.zip", true));
-                        });
-                    }
-
-                    if ("finished".equalsIgnoreCase(r.optString("status")) || "failed".equalsIgnoreCase(status)) {
+                    String status = r.optString("status", "");
+                    if ("ready".equalsIgnoreCase(status) || "expired".equalsIgnoreCase(status) || "failed".equalsIgnoreCase(status)) {
                         return;
                     }
 
